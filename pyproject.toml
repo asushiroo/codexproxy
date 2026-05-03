@@ -1,0 +1,16 @@
+[project]
+name = "codexproxy"
+version = "0.1.0"
+description = "Count-limited multi-port reverse proxy for Codex-compatible upstreams"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.11,<4",
+]
+
+[project.scripts]
+codexproxy = "codexproxy.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"

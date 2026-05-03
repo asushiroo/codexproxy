@@ -1,0 +1,22 @@
+{
+  "listen_host": "0.0.0.0",
+  "advertise_host": "your-server-host-or-ip",
+  "listen_port": 7001,
+  "base_url": "https://your-upstream.example/v1",
+  "upstream_api_key": "sk-your-real-upstream-key",
+  "record": false,
+  "clients": [
+    {
+      "name": "client-1",
+      "client_api_key": "sk-client-example-1",
+      "limit": 300,
+      "count": 0
+    },
+    {
+      "name": "client-2",
+      "client_api_key": "sk-client-example-2",
+      "limit": 300,
+      "count": 0
+    }
+  ]
+}
