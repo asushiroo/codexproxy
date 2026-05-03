@@ -358,6 +358,7 @@ async def run_proxy(config_path: Path, *, expire_time: str | None = None) -> Non
     expiry_manager = ExpiryManager.from_runtime(
         config_path=config_path,
         expire_time_text=expire_time,
+        on_update_success=store.reset_all,
     )
     print(f"Expire time: {expiry_manager.expire_time_text}")
 

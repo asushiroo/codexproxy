@@ -126,6 +126,7 @@ codex exec "hello" --skip-git-repo-check
 If the command succeeds:
 
 - next expire time = command finish time + 1 day
+- all client `count` values are reset to `0`
 - the cache file is updated
 - the new expire time is printed
 

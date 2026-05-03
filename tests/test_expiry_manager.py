@@ -66,9 +66,11 @@ class ExpiryManagerTests(unittest.IsolatedAsyncioTestCase):
     async def test_update_success_sets_next_expire_time_to_finish_time_plus_one_day(self) -> None:
         with TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "proxy-config.json"
+            callback_calls: list[str] = []
             manager = ExpiryManager.from_runtime(
                 config_path=config_path,
                 expire_time_text="2026/5/3 21:32:39",
+                on_update_success=lambda: callback_calls.append("reset"),
             )
 
             async def fake_create_subprocess_exec(*args, **kwargs):
@@ -87,5 +89,6 @@ class ExpiryManagerTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertTrue(updated)
             self.assertEqual(manager.expire_time_text, "2026/5/4 22:00:00")
+            self.assertEqual(callback_calls, ["reset"])
             cached_text = (Path(temp_dir) / "cache" / "expire-time.json").read_text(encoding="utf-8")
             self.assertIn("2026/5/4 22:00:00", cached_text)

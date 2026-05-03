@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Callable
 
 EXPIRY_TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 CACHE_DIR_NAME = "cache"
@@ -27,17 +28,25 @@ class ExpiryManager:
         cache_path: Path,
         error_log_path: Path,
         working_dir: Path,
+        on_update_success: Callable[[], object] | None = None,
     ) -> None:
         self._expire_time = expire_time
         self._cache_path = cache_path
         self._error_log_path = error_log_path
         self._working_dir = working_dir
+        self._on_update_success = on_update_success
         self._notice: str | None = None
         self._auto_update_enabled = True
         self._task: asyncio.Task | None = None
 
     @classmethod
-    def from_runtime(cls, *, config_path: Path, expire_time_text: str | None) -> "ExpiryManager":
+    def from_runtime(
+        cls,
+        *,
+        config_path: Path,
+        expire_time_text: str | None,
+        on_update_success: Callable[[], object] | None = None,
+    ) -> "ExpiryManager":
         cache_path = config_path.parent / CACHE_DIR_NAME / CACHE_FILE_NAME
         error_log_path = config_path.parent / ERROR_LOG_PATH
         working_dir = config_path.parent
@@ -49,6 +58,7 @@ class ExpiryManager:
                 cache_path=cache_path,
                 error_log_path=error_log_path,
                 working_dir=working_dir,
+                on_update_success=on_update_success,
             )
             manager._save_cache()
             return manager
@@ -65,6 +75,7 @@ class ExpiryManager:
             cache_path=cache_path,
             error_log_path=error_log_path,
             working_dir=working_dir,
+            on_update_success=on_update_success,
         )
 
     @property
@@ -131,6 +142,15 @@ class ExpiryManager:
         self._expire_time = finished_at + timedelta(days=1)
         self._notice = None
         self._auto_update_enabled = True
+        if self._on_update_success is not None:
+            try:
+                self._on_update_success()
+            except Exception as exc:
+                self._handle_update_failure(
+                    f"[{datetime.now().isoformat(sep=' ', timespec='seconds')}] "
+                    f"expire_time={started_expire_time} post_update_error={type(exc).__name__}: {exc}\n"
+                )
+                return False
         self._save_cache()
         print(f"Expire time updated: {format_expire_time(self._expire_time)}")
         return True
