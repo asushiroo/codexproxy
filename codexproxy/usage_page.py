@@ -12,7 +12,6 @@ def render_usage_page(binding: ClientBinding, expiry_status: ExpiryStatus | None
         0 if binding.limit == 0 else round((binding.count / binding.limit) * 100, 2)
     )
     client_name = escape(binding.name)
-    client_api_key = escape(_mask_api_key(binding.client_api_key or ""))
     expire_time_text = escape(expiry_status.expire_time_text or "Not set") if expiry_status else "Not set"
     auto_update_enabled = "enabled" if expiry_status and expiry_status.auto_update_enabled else "disabled"
     notice_html = ""
@@ -46,7 +45,6 @@ def render_usage_page(binding: ClientBinding, expiry_status: ExpiryStatus | None
     <h1>Client Usage</h1>
     <div class=\"meta\">
       <div><strong>client</strong>: {client_name}</div>
-      <div><strong>client_api_key</strong>: {client_api_key}</div>
       <div><strong>expire_time</strong>: {expire_time_text}</div>
       <div><strong>auto_update</strong>: {auto_update_enabled}</div>
     </div>
@@ -73,9 +71,3 @@ def render_usage_page(binding: ClientBinding, expiry_status: ExpiryStatus | None
 </body>
 </html>
 """
-
-
-def _mask_api_key(client_api_key: str) -> str:
-    if len(client_api_key) <= 10:
-        return client_api_key
-    return f"{client_api_key[:6]}...{client_api_key[-4:]}"

@@ -12,6 +12,7 @@ DEFAULT_LISTEN_PORT = 7001
 DEFAULT_CLIENT_COUNT = 2
 DEFAULT_CLIENT_LIMIT = 300
 DEFAULT_CLIENT_NAME_PREFIX = "client-"
+DEFAULT_CLIENT_NAME_SUFFIX_LENGTH = 4
 DEFAULT_CLIENT_API_KEY_PREFIX = "sk-client-"
 
 
@@ -30,6 +31,7 @@ class ProxyConfig:
     base_url: str
     upstream_api_key: str
     clients: list[ClientConfig]
+    client_name_suffix_length: int = DEFAULT_CLIENT_NAME_SUFFIX_LENGTH
     advertise_host: str | None = None
     record: bool = False
 
@@ -39,6 +41,7 @@ def build_default_config(
     upstream_api_key: str,
     *,
     client_count: int = DEFAULT_CLIENT_COUNT,
+    client_name_suffix_length: int = DEFAULT_CLIENT_NAME_SUFFIX_LENGTH,
     listen_port: int = DEFAULT_LISTEN_PORT,
     advertise_host: str | None = None,
     record: bool = False,
@@ -49,6 +52,7 @@ def build_default_config(
         base_url=base_url,
         upstream_api_key=upstream_api_key,
         clients=[],
+        client_name_suffix_length=client_name_suffix_length,
         advertise_host=advertise_host,
         record=record,
     )
@@ -70,6 +74,10 @@ def load_config(path: Path) -> ProxyConfig:
             base_url=payload["base_url"],
             upstream_api_key=payload["upstream_api_key"],
             clients=[ClientConfig(**item) for item in payload["clients"]],
+            client_name_suffix_length=payload.get(
+                "client_name_suffix_length",
+                DEFAULT_CLIENT_NAME_SUFFIX_LENGTH,
+            ),
             advertise_host=payload.get("advertise_host"),
             record=payload.get("record", False),
         )
@@ -85,6 +93,7 @@ def save_config(path: Path, config: ProxyConfig) -> None:
         "listen_port": config.listen_port,
         "base_url": config.base_url,
         "upstream_api_key": config.upstream_api_key,
+        "client_name_suffix_length": config.client_name_suffix_length,
         "record": config.record,
         "clients": [asdict(item) for item in config.clients],
     }
@@ -114,6 +123,8 @@ def validate_config(config: ProxyConfig) -> None:
         raise ValueError("record must be a boolean.")
     if not config.upstream_api_key:
         raise ValueError("upstream_api_key must be non-empty.")
+    if config.client_name_suffix_length < 1:
+        raise ValueError("client_name_suffix_length must be >= 1.")
 
     parsed = urlparse(config.base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -143,7 +154,7 @@ def add_new_client(config: ProxyConfig) -> ClientConfig:
     existing_names = {client.name for client in config.clients}
     existing_keys = {client.client_api_key for client in config.clients}
     client = ClientConfig(
-        name=_next_client_name(existing_names),
+        name=_generate_unique_client_name(existing_names, config.client_name_suffix_length),
         client_api_key=_generate_unique_client_api_key(existing_keys),
         limit=DEFAULT_CLIENT_LIMIT,
         count=0,
@@ -153,19 +164,15 @@ def add_new_client(config: ProxyConfig) -> ClientConfig:
     return client
 
 
-def _next_client_name(existing_names: set[str]) -> str:
-    max_index = 0
-    for name in existing_names:
-        prefix, separator, suffix = name.rpartition("-")
-        if separator and prefix == DEFAULT_CLIENT_NAME_PREFIX.rstrip("-") and suffix.isdigit():
-            max_index = max(max_index, int(suffix))
+def _generate_unique_client_name(existing_names: set[str], suffix_length: int) -> str:
+    while True:
+        candidate = f"{DEFAULT_CLIENT_NAME_PREFIX}{_generate_client_name_suffix(suffix_length)}"
+        if candidate not in existing_names:
+            return candidate
 
-    next_index = max_index + 1
-    candidate = f"{DEFAULT_CLIENT_NAME_PREFIX}{next_index}"
-    while candidate in existing_names:
-        next_index += 1
-        candidate = f"{DEFAULT_CLIENT_NAME_PREFIX}{next_index}"
-    return candidate
+
+def _generate_client_name_suffix(length: int) -> str:
+    return secrets.token_hex((length + 1) // 2)[:length]
 
 
 def _generate_unique_client_api_key(existing_keys: set[str]) -> str:
@@ -209,6 +216,10 @@ def _load_legacy_client_scoped_config(payload: dict) -> ProxyConfig:
             )
             for item in client_payloads
         ],
+        client_name_suffix_length=payload.get(
+            "client_name_suffix_length",
+            DEFAULT_CLIENT_NAME_SUFFIX_LENGTH,
+        ),
         advertise_host=payload.get("advertise_host"),
         record=payload.get("record", False),
     )

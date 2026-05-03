@@ -6,6 +6,7 @@ from pathlib import Path
 
 from codexproxy.config import (
     DEFAULT_CLIENT_COUNT,
+    DEFAULT_CLIENT_NAME_SUFFIX_LENGTH,
     DEFAULT_CONFIG_PATH,
     DEFAULT_LISTEN_PORT,
     build_default_config,
@@ -67,6 +68,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"How many client entries to create. Default: {DEFAULT_CLIENT_COUNT}",
     )
     init_parser.add_argument(
+        "--client-name-suffix-length",
+        type=int,
+        default=DEFAULT_CLIENT_NAME_SUFFIX_LENGTH,
+        help=(
+            "How many random characters to generate after the client- prefix. "
+            f"Default: {DEFAULT_CLIENT_NAME_SUFFIX_LENGTH}"
+        ),
+    )
+    init_parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite the target config file if it already exists.",
@@ -97,6 +107,7 @@ def main() -> None:
             base_url=args.base_url,
             upstream_api_key=args.upstream_api_key,
             client_count=args.client_count,
+            client_name_suffix_length=args.client_name_suffix_length,
             force=args.force,
         )
         return
@@ -138,18 +149,22 @@ def _init_config_command(
     base_url: str,
     upstream_api_key: str,
     client_count: int,
+    client_name_suffix_length: int,
     force: bool,
 ) -> None:
     if config_path.exists() and not force:
         raise SystemExit(f"{config_path} already exists. Use --force to overwrite it.")
     if client_count < 0:
         raise SystemExit("client-count must be >= 0.")
+    if client_name_suffix_length < 1:
+        raise SystemExit("client-name-suffix-length must be >= 1.")
 
     config = build_default_config(
         base_url,
         upstream_api_key,
         client_count=client_count,
         listen_port=DEFAULT_LISTEN_PORT,
+        client_name_suffix_length=client_name_suffix_length,
     )
     save_config(config_path, config)
     print(

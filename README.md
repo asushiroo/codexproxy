@@ -8,7 +8,7 @@ Single-port reverse proxy for Codex-compatible upstreams with per-client API key
 - Uses one shared `base_url` and one shared `upstream_api_key` for every client
 - Dispatches requests by client API key
 - Supports `codexproxy new-client` to append one generated client config
-- Auto-generates client names as `client-1`, `client-2`, ...
+- Auto-generates hard-to-guess client names like `client-a1b2`
 - Auto-generates unique client API keys
 - Defaults each new client to `limit=300` and `count=0`
 - Persists counts and limits in a JSON config file
@@ -17,7 +17,7 @@ Single-port reverse proxy for Codex-compatible upstreams with per-client API key
 - Prints the current expire time at startup
 - Prints one log line per request with the latest per-client count
 - Supports `record: true` to capture full downstream/upstream debug records
-- Exposes a simple usage page at `/<client_api_key>/usage`
+- Exposes a simple usage page at `/<client_name>/usage`
 - Auto-runs `codex exec "hello" --skip-git-repo-check` when expire time is reached
 
 ## Quick Start
@@ -30,6 +30,17 @@ uv run codexproxy init-config \
   --base-url https://your-upstream.example/v1 \
   --upstream-api-key sk-your-real-upstream-key \
   --client-count 2
+```
+
+Optional: set the random suffix length for generated `client_name` values:
+
+```bash
+uv run codexproxy init-config \
+  --config proxy-config.json \
+  --base-url https://your-upstream.example/v1 \
+  --upstream-api-key sk-your-real-upstream-key \
+  --client-count 2 \
+  --client-name-suffix-length 6
 ```
 
 Add one more client later:
@@ -57,13 +68,13 @@ uv run codexproxy --config proxy-config.json run
 Open one client's usage page:
 
 ```text
-http://your-server-host:7001/<client_api_key>/usage
+http://your-server-host:7001/<client_name>/usage
 ```
 
 Reset one client:
 
 ```bash
-uv run codexproxy --config proxy-config.json reset --client client-1
+uv run codexproxy --config proxy-config.json reset --client <client_name>
 ```
 
 Reset all clients:
@@ -77,19 +88,18 @@ uv run codexproxy --config proxy-config.json reset --all
 Each configured client has a built-in usage page:
 
 ```text
-/<client_api_key>/usage
+/<client_name>/usage
 ```
 
 Example:
 
 ```text
-http://127.0.0.1:7001/sk-client-xxxxxxxx/usage
+http://127.0.0.1:7001/client-a1b2/usage
 ```
 
 The page shows:
 
 - client name
-- masked `client_api_key`
 - current expire time
 - auto update status
 - remaining usage: `limit - count`
@@ -164,16 +174,17 @@ When `record` is `true`, the proxy captures the full downstream request, the rew
   "listen_port": 7001,
   "base_url": "https://your-upstream.example/v1",
   "upstream_api_key": "sk-your-real-upstream-key",
+  "client_name_suffix_length": 4,
   "record": false,
   "clients": [
     {
-      "name": "client-1",
+      "name": "client-a1b2",
       "client_api_key": "sk-client-...",
       "limit": 300,
       "count": 0
     },
     {
-      "name": "client-2",
+      "name": "client-b7c8",
       "client_api_key": "sk-client-...",
       "limit": 300,
       "count": 0

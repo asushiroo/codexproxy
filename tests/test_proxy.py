@@ -266,7 +266,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             try:
                 async with ClientSession() as session:
                     async with session.get(
-                        f"http://127.0.0.1:{proxy_port}/client-key-a/usage"
+                        f"http://127.0.0.1:{proxy_port}/client-1/usage"
                     ) as response:
                         html = await response.text()
 
@@ -278,13 +278,14 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("client-1", html)
                 self.assertIn("2026/5/3 21:32:39", html)
                 self.assertIn("Auto update failed", html)
+                self.assertNotIn("client-key-a", html)
 
                 reloaded = ConfigStore.from_path(config_path)
                 self.assertEqual(reloaded.list_clients()[0].count, 12)
             finally:
                 await proxy_runner.cleanup()
 
-    async def test_usage_page_returns_404_for_unknown_client_api_key(self) -> None:
+    async def test_usage_page_returns_404_for_unknown_client_name(self) -> None:
         proxy_port = _find_free_port()
 
         with TemporaryDirectory() as temp_dir:
@@ -314,12 +315,12 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             try:
                 async with ClientSession() as session:
                     async with session.get(
-                        f"http://127.0.0.1:{proxy_port}/client-key-missing/usage"
+                        f"http://127.0.0.1:{proxy_port}/client-missing/usage"
                     ) as response:
                         body = await response.text()
 
                 self.assertEqual(response.status, 404)
-                self.assertIn("client api key is not configured", body)
+                self.assertIn("client name is not configured", body)
             finally:
                 await proxy_runner.cleanup()
 

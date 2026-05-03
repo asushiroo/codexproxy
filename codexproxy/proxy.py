@@ -18,6 +18,7 @@ from codexproxy.debug_record import (
 from codexproxy.expiry_manager import ExpiryManager
 from codexproxy.state import (
     ClientApiKeyNotConfiguredError,
+    ClientNameNotConfiguredError,
     ConfigStore,
     RequestLimitReachedError,
 )
@@ -150,19 +151,19 @@ def create_app(store: ConfigStore, expiry_manager: ExpiryManager | None = None) 
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
-    app.router.add_get("/{client_api_key}/usage", handle_usage_request)
+    app.router.add_get("/{client_name}/usage", handle_usage_request)
     app.router.add_route("*", "/{tail:.*}", handle_proxy_request)
     return app
 
 
 async def handle_usage_request(request: web.Request) -> web.Response:
     store = request.app[CONFIG_STORE_KEY]
-    client_api_key = request.match_info["client_api_key"]
+    client_name = request.match_info["client_name"]
 
     try:
-        binding = store.get_client(client_api_key)
-    except ClientApiKeyNotConfiguredError as exc:
-        raise web.HTTPNotFound(text="client api key is not configured") from exc
+        binding = store.get_client_by_name(client_name)
+    except ClientNameNotConfiguredError as exc:
+        raise web.HTTPNotFound(text="client name is not configured") from exc
 
     return web.Response(
         text=render_usage_page(
