@@ -1,9 +1,11 @@
+import json
 import socket
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+import codexproxy.debug_record as debug_record_module
 import codexproxy.proxy as proxy_module
 from aiohttp import ClientSession, web
 from yarl import URL
@@ -218,7 +220,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await proxy_runner.cleanup()
 
-    async def test_record_true_prints_request_and_response_bodies(self) -> None:
+    async def test_record_true_saves_full_debug_record_and_prints_summary(self) -> None:
         upstream_port = _find_free_port()
         proxy_port = _find_free_port()
 
@@ -236,6 +238,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         try:
             with TemporaryDirectory() as temp_dir:
                 config_path = Path(temp_dir) / "proxy-config.json"
+                debug_dir = Path(temp_dir) / "records"
                 config = ProxyConfig(
                     listen_host="127.0.0.1",
                     listen_port=proxy_port,
@@ -260,34 +263,32 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                 await proxy_site.start()
 
                 try:
-                    with patch("builtins.print") as mocked_print:
-                        async with ClientSession() as session:
-                            async with session.post(
-                                f"http://127.0.0.1:{proxy_port}/chat",
-                                headers={"Authorization": "Bearer client-key-a"},
-                                json={"message": "hello"},
-                            ) as response:
-                                payload = await response.json()
+                    with patch.object(debug_record_module, "DEBUG_RECORD_DIR", debug_dir):
+                        with patch("builtins.print") as mocked_print:
+                            async with ClientSession() as session:
+                                async with session.post(
+                                    f"http://127.0.0.1:{proxy_port}/chat",
+                                    headers={"Authorization": "Bearer client-key-a"},
+                                    json={"message": "hello"},
+                                ) as response:
+                                    payload = await response.json()
 
                     self.assertEqual(payload, {"echo": "hello"})
-                    messages = [
-                        " ".join(str(part) for part in call.args)
-                        for call in mocked_print.call_args_list
-                    ]
-                    self.assertTrue(
-                        any(
-                            "RECORD direction=request" in message
-                            and 'body={"message":"hello"}' in message
-                            for message in messages
-                        )
-                    )
-                    self.assertTrue(
-                        any(
-                            "RECORD direction=response" in message
-                            and 'body={"echo":"hello"}' in message
-                            for message in messages
-                        )
-                    )
+                    files = list(debug_dir.glob("*.json"))
+                    self.assertEqual(len(files), 1)
+                    record = json.loads(files[0].read_text(encoding="utf-8"))
+                    self.assertEqual(record["client_name"], "client-1")
+                    self.assertEqual(record["downstream_request"]["headers"]["Authorization"], "Bearer client-key-a")
+                    self.assertEqual(record["upstream_request"]["headers"]["Authorization"], "Bearer shared-upstream-key")
+                    self.assertEqual(record["downstream_request"]["body"], {"message": "hello"})
+                    self.assertEqual(record["upstream_request"]["body"], {"message": "hello"})
+                    self.assertEqual(record["upstream_response"]["body"], {"echo": "hello"})
+
+                    messages = [" ".join(str(part) for part in call.args) for call in mocked_print.call_args_list]
+                    self.assertTrue(any(message.startswith("RECORD {") for message in messages))
+                    self.assertTrue(any(str(files[0]) in message for message in messages))
+                    self.assertTrue(any("downstream_request" in message for message in messages))
+                    self.assertTrue(any("upstream_request" in message for message in messages))
                 finally:
                     await proxy_runner.cleanup()
         finally:

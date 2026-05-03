@@ -9,6 +9,12 @@ from pathlib import Path
 from aiohttp import ClientError, ClientSession, ClientTimeout, web
 from yarl import URL
 
+from codexproxy.debug_record import (
+    build_debug_record,
+    build_http_message_snapshot,
+    format_debug_record_summary,
+    save_debug_record,
+)
 from codexproxy.state import (
     ClientApiKeyNotConfiguredError,
     ConfigStore,
@@ -204,19 +210,28 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
     target_url = build_target_url(binding.base_url, request.rel_url)
     forwarded_headers = _forward_request_headers(request.headers)
     _replace_upstream_auth_headers(forwarded_headers, binding.upstream_api_key)
-    request_body = request.content.iter_chunked(64 * 1024) if request.can_read_body else None
 
-    if store.record and request.can_read_body:
-        request_body = await request.read()
-        print(
-            format_record_log_line(
-                direction="request",
-                method=request.method,
-                path=request.path_qs,
-                port=local_port,
-                content_type=_extract_content_type(request.headers),
-                body=_render_record_body(request_body, request.headers),
-            )
+    has_request_body = request.can_read_body
+    downstream_request_body = b""
+    request_body = request.content.iter_chunked(64 * 1024) if has_request_body else None
+    if store.record:
+        downstream_request_body = await request.read() if has_request_body else b""
+        request_body = downstream_request_body if has_request_body else None
+
+    downstream_request_snapshot = None
+    upstream_request_snapshot = None
+    if store.record:
+        downstream_request_snapshot = build_http_message_snapshot(
+            method=request.method,
+            url=str(request.url),
+            headers=request.headers,
+            body=downstream_request_body,
+        )
+        upstream_request_snapshot = build_http_message_snapshot(
+            method=request.method,
+            url=str(target_url),
+            headers=forwarded_headers,
+            body=downstream_request_body,
         )
 
     try:
@@ -252,20 +267,25 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
                     recorded_response_body.extend(chunk)
                 await downstream.write(chunk)
             await downstream.write_eof()
-            if recorded_response_body is not None:
-                print(
-                    format_record_log_line(
-                        direction="response",
-                        method=request.method,
-                        path=request.path_qs,
-                        port=local_port,
-                        status=upstream_response.status,
-                        content_type=_extract_content_type(upstream_response.headers),
-                        body=_render_record_body(bytes(recorded_response_body), upstream_response.headers),
-                    )
+
+            if recorded_response_body is not None and downstream_request_snapshot and upstream_request_snapshot:
+                upstream_response_snapshot = build_http_message_snapshot(
+                    method=request.method,
+                    url=str(target_url),
+                    headers=upstream_response.headers,
+                    body=bytes(recorded_response_body),
+                    status=upstream_response.status,
+                    reason=upstream_response.reason,
+                )
+                _record_debug_artifacts(
+                    client_name=binding.name,
+                    port=local_port,
+                    downstream_request=downstream_request_snapshot,
+                    upstream_request=upstream_request_snapshot,
+                    upstream_response=upstream_response_snapshot,
                 )
             return downstream
-    except ClientError:
+    except ClientError as exc:
         print(
             format_request_log_line(
                 method=request.method,
@@ -279,6 +299,17 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
                 detail="upstream-request-failed",
             )
         )
+        if store.record and downstream_request_snapshot and upstream_request_snapshot:
+            _record_debug_artifacts(
+                client_name=binding.name,
+                port=local_port,
+                downstream_request=downstream_request_snapshot,
+                upstream_request=upstream_request_snapshot,
+                upstream_error={
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
         return web.json_response(
             {
                 "error": "upstream request failed",
@@ -317,6 +348,27 @@ async def run_proxy(config_path: Path) -> None:
         await runner.cleanup()
 
 
+def _record_debug_artifacts(
+    *,
+    client_name: str,
+    port: int,
+    downstream_request: dict,
+    upstream_request: dict,
+    upstream_response: dict | None = None,
+    upstream_error: dict | None = None,
+) -> None:
+    record = build_debug_record(
+        client_name=client_name,
+        port=port,
+        downstream_request=downstream_request,
+        upstream_request=upstream_request,
+        upstream_response=upstream_response,
+        upstream_error=upstream_error,
+    )
+    file_path = save_debug_record(record)
+    print(format_debug_record_summary(record, file_path=file_path))
+
+
 def _resolve_local_port(request: web.Request) -> int:
     sockname = request.transport.get_extra_info("sockname")
     if not sockname:
@@ -343,7 +395,7 @@ def _forward_request_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return {
         key: value
         for key, value in headers.items()
-        if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "host"
+        if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() not in {"host", "content-length"}
     }
 
 

@@ -15,7 +15,7 @@ Single-port reverse proxy for Codex-compatible upstreams with per-client API key
 - Supports resetting one client or all clients from the CLI
 - Prints the client-facing `base_url` at startup
 - Prints one log line per request with the latest per-client count
-- Supports `record: true` to print parsed request/response bodies
+- Supports `record: true` to capture full downstream/upstream debug records
 
 ## Quick Start
 
@@ -73,7 +73,7 @@ It does not add missing auth headers for you.
 
 ## Config Format
 
-When `record` is `true`, the proxy buffers each request body, parses text/JSON content when possible, and prints both the request and response body to stdout.
+When `record` is `true`, the proxy captures the full downstream request, the rewritten upstream request, and the upstream response. It prints a terminal-friendly truncated summary (each string field capped at 500 words) and saves the full formatted JSON record under `/tmp/codexproxy-records/`.
 
 ```json
 {
