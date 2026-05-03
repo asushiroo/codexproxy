@@ -11,6 +11,7 @@ from aiohttp import ClientSession, web
 from yarl import URL
 
 from codexproxy.config import ClientConfig, ProxyConfig, save_config
+from codexproxy.expiry_manager import ExpiryStatus
 from codexproxy.proxy import (
     build_client_base_url,
     build_target_url,
@@ -25,6 +26,21 @@ def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
         candidate.bind(("127.0.0.1", 0))
         return int(candidate.getsockname()[1])
+
+
+class _FakeExpiryManager:
+    def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+    def get_status(self) -> ExpiryStatus:
+        return ExpiryStatus(
+            expire_time_text="2026/5/3 21:32:39",
+            auto_update_enabled=False,
+            notice="Auto update failed. Restart manually with --expire-time to set a new expire time.",
+        )
 
 
 class ProxyTests(unittest.IsolatedAsyncioTestCase):
@@ -205,7 +221,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             save_config(config_path, config)
             store = ConfigStore.from_path(config_path)
 
-            proxy_runner = web.AppRunner(create_app(store))
+            proxy_runner = web.AppRunner(create_app(store, expiry_manager=_FakeExpiryManager()))
             await proxy_runner.setup()
             proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
             await proxy_site.start()
@@ -242,7 +258,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             save_config(config_path, config)
             store = ConfigStore.from_path(config_path)
 
-            proxy_runner = web.AppRunner(create_app(store))
+            proxy_runner = web.AppRunner(create_app(store, expiry_manager=_FakeExpiryManager()))
             await proxy_runner.setup()
             proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
             await proxy_site.start()
@@ -260,6 +276,8 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("288 / 300", html)
                 self.assertIn("12 / 300", html)
                 self.assertIn("client-1", html)
+                self.assertIn("2026/5/3 21:32:39", html)
+                self.assertIn("Auto update failed", html)
 
                 reloaded = ConfigStore.from_path(config_path)
                 self.assertEqual(reloaded.list_clients()[0].count, 12)

@@ -65,3 +65,16 @@ class CliTests(unittest.TestCase):
             self.assertEqual(config.clients[0].count, 0)
             self.assertIn("Added client client-1", output)
             self.assertIn(config.clients[0].client_api_key, output)
+
+    def test_default_run_passes_expire_time_argument(self) -> None:
+        with patch("codexproxy.cli._run_command") as mocked_run_command:
+            with patch.object(
+                sys,
+                "argv",
+                ["codexproxy", "--expire-time", "2026/5/3 21:32:39"],
+            ):
+                main()
+
+        mocked_run_command.assert_called_once()
+        _, kwargs = mocked_run_command.call_args
+        self.assertEqual(kwargs["expire_time"], "2026/5/3 21:32:39")

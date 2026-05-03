@@ -24,14 +24,23 @@ def _add_config_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_expire_time_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--expire-time",
+        help='Expire time for today, format: "YYYY/M/D HH:MM:SS". Required on first startup when no cache exists.',
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Single-port reverse proxy with shared upstream config.")
     _add_config_argument(parser)
+    _add_expire_time_argument(parser)
 
     subparsers = parser.add_subparsers(dest="command")
 
     run_parser = subparsers.add_parser("run", help="Run the proxy server.")
     _add_config_argument(run_parser)
+    _add_expire_time_argument(run_parser)
 
     reset_parser = subparsers.add_parser("reset", help="Reset request counts.")
     _add_config_argument(reset_parser)
@@ -75,7 +84,7 @@ def main() -> None:
     command = args.command or "run"
 
     if command == "run":
-        _run_command(args.config)
+        _run_command(args.config, expire_time=args.expire_time)
         return
 
     if command == "reset":
@@ -99,9 +108,9 @@ def main() -> None:
     parser.error(f"Unknown command: {command}")
 
 
-def _run_command(config_path: Path) -> None:
+def _run_command(config_path: Path, *, expire_time: str | None) -> None:
     try:
-        asyncio.run(run_proxy(config_path))
+        asyncio.run(run_proxy(config_path, expire_time=expire_time))
     except KeyboardInterrupt:
         print("Proxy stopped.")
 

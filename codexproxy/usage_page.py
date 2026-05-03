@@ -2,16 +2,26 @@ from __future__ import annotations
 
 from html import escape
 
+from codexproxy.expiry_manager import ExpiryStatus
 from codexproxy.state import ClientBinding
 
 
-def render_usage_page(binding: ClientBinding) -> str:
+def render_usage_page(binding: ClientBinding, expiry_status: ExpiryStatus | None = None) -> str:
     remaining = max(binding.limit - binding.count, 0)
     usage_percent = (
         0 if binding.limit == 0 else round((binding.count / binding.limit) * 100, 2)
     )
     client_name = escape(binding.name)
     client_api_key = escape(_mask_api_key(binding.client_api_key or ""))
+    expire_time_text = escape(expiry_status.expire_time_text or "Not set") if expiry_status else "Not set"
+    auto_update_enabled = "enabled" if expiry_status and expiry_status.auto_update_enabled else "disabled"
+    notice_html = ""
+    if expiry_status and expiry_status.notice:
+        notice_html = (
+            '<div class="notice">'
+            f"{escape(expiry_status.notice)}"
+            "</div>"
+        )
 
     return f"""<!DOCTYPE html>
 <html lang=\"zh-CN\">
@@ -28,6 +38,7 @@ def render_usage_page(binding: ClientBinding) -> str:
     .label {{ color: #6b7280; font-size: 14px; margin-bottom: 8px; }}
     .value {{ font-size: 28px; font-weight: 700; }}
     .meta {{ margin-top: 24px; color: #4b5563; line-height: 1.7; word-break: break-all; }}
+    .notice {{ margin-top: 20px; padding: 14px 16px; border-radius: 12px; background: #fff7ed; color: #9a3412; border: 1px solid #fdba74; }}
   </style>
 </head>
 <body>
@@ -36,7 +47,10 @@ def render_usage_page(binding: ClientBinding) -> str:
     <div class=\"meta\">
       <div><strong>client</strong>: {client_name}</div>
       <div><strong>client_api_key</strong>: {client_api_key}</div>
+      <div><strong>expire_time</strong>: {expire_time_text}</div>
+      <div><strong>auto_update</strong>: {auto_update_enabled}</div>
     </div>
+    {notice_html}
     <div class=\"grid\">
       <div class=\"item\">
         <div class=\"label\">Remaining</div>

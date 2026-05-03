@@ -15,6 +15,7 @@ from codexproxy.debug_record import (
     format_debug_record_summary,
     save_debug_record,
 )
+from codexproxy.expiry_manager import ExpiryManager
 from codexproxy.state import (
     ClientApiKeyNotConfiguredError,
     ConfigStore,
@@ -34,6 +35,7 @@ HOP_BY_HOP_HEADERS = {
 }
 CONFIG_STORE_KEY = web.AppKey("config_store", ConfigStore)
 CLIENT_SESSION_KEY = web.AppKey("client_session", ClientSession)
+EXPIRY_MANAGER_KEY = web.AppKey("expiry_manager", ExpiryManager)
 
 
 def build_target_url(base_url: str, request_url: URL) -> URL:
@@ -130,14 +132,20 @@ def format_record_log_line(
     return " ".join(parts)
 
 
-def create_app(store: ConfigStore) -> web.Application:
+def create_app(store: ConfigStore, expiry_manager: ExpiryManager | None = None) -> web.Application:
     app = web.Application()
     app[CONFIG_STORE_KEY] = store
+    if expiry_manager is not None:
+        app[EXPIRY_MANAGER_KEY] = expiry_manager
 
     async def on_startup(application: web.Application) -> None:
         application[CLIENT_SESSION_KEY] = ClientSession(timeout=ClientTimeout(total=None))
+        if expiry_manager is not None:
+            expiry_manager.start()
 
     async def on_cleanup(application: web.Application) -> None:
+        if expiry_manager is not None:
+            await expiry_manager.stop()
         await application[CLIENT_SESSION_KEY].close()
 
     app.on_startup.append(on_startup)
@@ -157,7 +165,14 @@ async def handle_usage_request(request: web.Request) -> web.Response:
         raise web.HTTPNotFound(text="client api key is not configured") from exc
 
     return web.Response(
-        text=render_usage_page(binding),
+        text=render_usage_page(
+            binding,
+            expiry_status=(
+                request.app[EXPIRY_MANAGER_KEY].get_status()
+                if EXPIRY_MANAGER_KEY in request.app
+                else None
+            ),
+        ),
         content_type="text/html",
     )
 
@@ -338,9 +353,15 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
         )
 
 
-async def run_proxy(config_path: Path) -> None:
+async def run_proxy(config_path: Path, *, expire_time: str | None = None) -> None:
     store = ConfigStore.from_path(config_path)
-    app = create_app(store)
+    expiry_manager = ExpiryManager.from_runtime(
+        config_path=config_path,
+        expire_time_text=expire_time,
+    )
+    print(f"Expire time: {expiry_manager.expire_time_text}")
+
+    app = create_app(store, expiry_manager=expiry_manager)
     runner = web.AppRunner(app)
     await runner.setup()
 

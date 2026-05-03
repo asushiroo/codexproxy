@@ -14,9 +14,11 @@ Single-port reverse proxy for Codex-compatible upstreams with per-client API key
 - Persists counts and limits in a JSON config file
 - Supports resetting one client or all clients from the CLI
 - Prints the client-facing `base_url` at startup
+- Prints the current expire time at startup
 - Prints one log line per request with the latest per-client count
 - Supports `record: true` to capture full downstream/upstream debug records
 - Exposes a simple usage page at `/<client_api_key>/usage`
+- Auto-runs `codex exec "hello" --skip-git-repo-check` when expire time is reached
 
 ## Quick Start
 
@@ -39,6 +41,14 @@ uv run codexproxy --config proxy-config.json new-client
 If `listen_host` is `0.0.0.0`, set `advertise_host` in the config to your real server IP or domain so startup logs print the exact value your downstream clients should fill.
 
 Run the proxy:
+
+```bash
+uv run codexproxy --config proxy-config.json --expire-time "2026/5/3 21:32:39" run
+```
+
+On first startup, `--expire-time` is required.
+
+If `cache/expire-time.json` already exists beside your config file, later startups can omit it:
 
 ```bash
 uv run codexproxy --config proxy-config.json run
@@ -80,7 +90,8 @@ The page shows:
 
 - client name
 - masked `client_api_key`
-- shared `base_url`
+- current expire time
+- auto update status
 - remaining usage: `limit - count`
 - used usage: `count`
 - total limit: `limit`
@@ -91,6 +102,39 @@ Notes:
 - opening the usage page does **not** increment `count`
 - the page reads directly from the current JSON config state
 - after `reset --client ...` or `reset --all`, the page reflects the new count immediately
+- if automatic expire-time update fails, the page shows a restart notice
+
+## Expire Time Cache And Auto Update
+
+Startup rules:
+
+- first startup: must pass `--expire-time "YYYY/M/D HH:MM:SS"`
+- later startup: if `cache/expire-time.json` exists, `--expire-time` can be omitted
+- every startup prints the current expire time
+
+Cache and log files are stored relative to the config file directory:
+
+- expire time cache: `cache/expire-time.json`
+- update failure log: `logs/error/update.log`
+
+When the current expire time is reached, the proxy runs:
+
+```bash
+codex exec "hello" --skip-git-repo-check
+```
+
+If the command succeeds:
+
+- next expire time = command finish time + 1 day
+- the cache file is updated
+- the new expire time is printed
+
+If the command fails:
+
+- an error is appended to `logs/error/update.log`
+- `cache/expire-time.json` is deleted
+- further automatic updates stop
+- the usage page shows a notice asking for manual restart with `--expire-time`
 
 ## Auth Behavior
 
