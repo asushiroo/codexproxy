@@ -20,6 +20,7 @@ from codexproxy.state import (
     ConfigStore,
     RequestLimitReachedError,
 )
+from codexproxy.usage_page import render_usage_page
 
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -141,8 +142,24 @@ def create_app(store: ConfigStore) -> web.Application:
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
+    app.router.add_get("/{client_api_key}/usage", handle_usage_request)
     app.router.add_route("*", "/{tail:.*}", handle_proxy_request)
     return app
+
+
+async def handle_usage_request(request: web.Request) -> web.Response:
+    store = request.app[CONFIG_STORE_KEY]
+    client_api_key = request.match_info["client_api_key"]
+
+    try:
+        binding = store.get_client(client_api_key)
+    except ClientApiKeyNotConfiguredError as exc:
+        raise web.HTTPNotFound(text="client api key is not configured") from exc
+
+    return web.Response(
+        text=render_usage_page(binding),
+        content_type="text/html",
+    )
 
 
 async def handle_proxy_request(request: web.Request) -> web.StreamResponse:

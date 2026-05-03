@@ -220,6 +220,91 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await proxy_runner.cleanup()
 
+    async def test_usage_page_shows_current_client_usage_without_incrementing_count(self) -> None:
+        proxy_port = _find_free_port()
+
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "proxy-config.json"
+            config = ProxyConfig(
+                listen_host="127.0.0.1",
+                listen_port=proxy_port,
+                base_url="http://127.0.0.1:1/v1",
+                upstream_api_key="shared-upstream-key",
+                clients=[
+                    ClientConfig(
+                        name="client-1",
+                        client_api_key="client-key-a",
+                        limit=300,
+                        count=12,
+                    )
+                ],
+            )
+            save_config(config_path, config)
+            store = ConfigStore.from_path(config_path)
+
+            proxy_runner = web.AppRunner(create_app(store))
+            await proxy_runner.setup()
+            proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
+            await proxy_site.start()
+
+            try:
+                async with ClientSession() as session:
+                    async with session.get(
+                        f"http://127.0.0.1:{proxy_port}/client-key-a/usage"
+                    ) as response:
+                        html = await response.text()
+
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.content_type, "text/html")
+                self.assertIn("Client Usage", html)
+                self.assertIn("288 / 300", html)
+                self.assertIn("12 / 300", html)
+                self.assertIn("client-1", html)
+
+                reloaded = ConfigStore.from_path(config_path)
+                self.assertEqual(reloaded.list_clients()[0].count, 12)
+            finally:
+                await proxy_runner.cleanup()
+
+    async def test_usage_page_returns_404_for_unknown_client_api_key(self) -> None:
+        proxy_port = _find_free_port()
+
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "proxy-config.json"
+            config = ProxyConfig(
+                listen_host="127.0.0.1",
+                listen_port=proxy_port,
+                base_url="http://127.0.0.1:1/v1",
+                upstream_api_key="shared-upstream-key",
+                clients=[
+                    ClientConfig(
+                        name="client-1",
+                        client_api_key="client-key-a",
+                        limit=300,
+                        count=0,
+                    )
+                ],
+            )
+            save_config(config_path, config)
+            store = ConfigStore.from_path(config_path)
+
+            proxy_runner = web.AppRunner(create_app(store))
+            await proxy_runner.setup()
+            proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
+            await proxy_site.start()
+
+            try:
+                async with ClientSession() as session:
+                    async with session.get(
+                        f"http://127.0.0.1:{proxy_port}/client-key-missing/usage"
+                    ) as response:
+                        body = await response.text()
+
+                self.assertEqual(response.status, 404)
+                self.assertIn("client api key is not configured", body)
+            finally:
+                await proxy_runner.cleanup()
+
     async def test_record_true_saves_full_debug_record_and_prints_summary(self) -> None:
         upstream_port = _find_free_port()
         proxy_port = _find_free_port()

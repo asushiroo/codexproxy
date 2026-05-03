@@ -16,6 +16,7 @@ Single-port reverse proxy for Codex-compatible upstreams with per-client API key
 - Prints the client-facing `base_url` at startup
 - Prints one log line per request with the latest per-client count
 - Supports `record: true` to capture full downstream/upstream debug records
+- Exposes a simple usage page at `/<client_api_key>/usage`
 
 ## Quick Start
 
@@ -43,6 +44,12 @@ Run the proxy:
 uv run codexproxy --config proxy-config.json run
 ```
 
+Open one client's usage page:
+
+```text
+http://your-server-host:7001/<client_api_key>/usage
+```
+
 Reset one client:
 
 ```bash
@@ -54,6 +61,36 @@ Reset all clients:
 ```bash
 uv run codexproxy --config proxy-config.json reset --all
 ```
+
+## Usage Page
+
+Each configured client has a built-in usage page:
+
+```text
+/<client_api_key>/usage
+```
+
+Example:
+
+```text
+http://127.0.0.1:7001/sk-client-xxxxxxxx/usage
+```
+
+The page shows:
+
+- client name
+- masked `client_api_key`
+- shared `base_url`
+- remaining usage: `limit - count`
+- used usage: `count`
+- total limit: `limit`
+- usage percent
+
+Notes:
+
+- opening the usage page does **not** increment `count`
+- the page reads directly from the current JSON config state
+- after `reset --client ...` or `reset --all`, the page reflects the new count immediately
 
 ## Auth Behavior
 
