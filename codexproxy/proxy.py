@@ -247,8 +247,14 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
             )
         )
         return web.json_response(
-            {"error": "request limit reached", "client": exc.client_name, "limit": exc.limit},
+            {
+                "error": "today's limit exceeded",
+                "detail": "This client has exceeded today's usage limit.",
+                "client": exc.client_name,
+                "limit": exc.limit,
+            },
             status=429,
+            reason="Today's limit exceeded",
         )
 
     target_url = build_target_url(binding.base_url, request.rel_url)

@@ -471,7 +471,12 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                             payload = await response.json()
 
                     self.assertEqual(response.status, 429)
-                    self.assertEqual(payload["error"], "request limit reached")
+                    self.assertEqual(response.reason, "Today's limit exceeded")
+                    self.assertEqual(payload["error"], "today's limit exceeded")
+                    self.assertEqual(
+                        payload["detail"],
+                        "This client has exceeded today's usage limit.",
+                    )
                     reloaded = ConfigStore.from_path(config_path)
                     self.assertEqual(reloaded.list_clients()[0].count, 298)
                 finally:
