@@ -3,10 +3,15 @@ from __future__ import annotations
 from html import escape
 
 from codexproxy.expiry_manager import ExpiryStatus
+from codexproxy.spend_tracker import DailySpendStatus
 from codexproxy.state import ClientBinding
 
 
-def render_usage_page(binding: ClientBinding, expiry_status: ExpiryStatus | None = None) -> str:
+def render_usage_page(
+    binding: ClientBinding,
+    expiry_status: ExpiryStatus | None = None,
+    spend_status: DailySpendStatus | None = None,
+) -> str:
     remaining = max(binding.limit - binding.count, 0)
     usage_percent = (
         0 if binding.limit == 0 else round((binding.count / binding.limit) * 100, 2)
@@ -15,6 +20,9 @@ def render_usage_page(binding: ClientBinding, expiry_status: ExpiryStatus | None
     expire_time_text = escape(expiry_status.expire_time_text or "Not set") if expiry_status else "Not set"
     auto_update_enabled = "enabled" if expiry_status and expiry_status.auto_update_enabled else "disabled"
     unlock_last_badge_html = _render_unlock_last_badge(expiry_status)
+    today_client_usd = _format_usd(spend_status.client_usd if spend_status else None)
+    today_total_usd = _format_usd(spend_status.total_usd if spend_status else None)
+    today_date_text = escape(spend_status.date_text if spend_status else "Not available")
     notice_html = ""
     if expiry_status and expiry_status.notice:
         notice_html = (
@@ -69,6 +77,14 @@ def render_usage_page(binding: ClientBinding, expiry_status: ExpiryStatus | None
         <div class=\"label\">Limit</div>
         <div class=\"value\">{binding.limit}</div>
       </div>
+      <div class=\"item\">
+        <div class=\"label\">Today USD ({today_date_text})</div>
+        <div class=\"value\">{today_client_usd}</div>
+      </div>
+      <div class=\"item\">
+        <div class=\"label\">Today Total USD ({today_date_text})</div>
+        <div class=\"value\">{today_total_usd}</div>
+      </div>
     </div>
   </div>
 </body>
@@ -82,3 +98,9 @@ def _render_unlock_last_badge(expiry_status: ExpiryStatus | None) -> str:
     if not expiry_status.unlock_last_enabled or not expiry_status.unlock_last_active:
         return ""
     return '<div class="unlock-last-badge">UNLOCK LAST ACTIVE</div>'
+
+
+def _format_usd(value) -> str:
+    if value is None:
+        return "$0.000000"
+    return f"${value:.6f}"

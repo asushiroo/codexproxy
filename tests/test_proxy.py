@@ -1,5 +1,6 @@
 import json
 import socket
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -371,6 +372,154 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             await upstream_site.stop()
             await upstream_runner.cleanup()
 
+    async def test_successful_json_response_updates_today_usd_spend(self) -> None:
+        upstream_port = _find_free_port()
+        proxy_port = _find_free_port()
+
+        async def upstream_handler(request: web.Request) -> web.Response:
+            return web.json_response(
+                {
+                    "ok": True,
+                    "usage": {
+                        "input_tokens": 1000,
+                        "input_tokens_details": {"cached_tokens": 200},
+                        "output_tokens": 500,
+                    },
+                }
+            )
+
+        upstream_app = web.Application()
+        upstream_app.router.add_post("/{tail:.*}", upstream_handler)
+        upstream_runner = web.AppRunner(upstream_app)
+        await upstream_runner.setup()
+        upstream_site = web.TCPSite(upstream_runner, "127.0.0.1", upstream_port)
+        await upstream_site.start()
+
+        try:
+            with TemporaryDirectory() as temp_dir:
+                config_path = Path(temp_dir) / "proxy-config.json"
+                config = ProxyConfig(
+                    listen_host="127.0.0.1",
+                    listen_port=proxy_port,
+                    base_url=f"http://127.0.0.1:{upstream_port}/v1",
+                    upstream_api_key="shared-upstream-key",
+                    clients=[
+                        ClientConfig(
+                            name="client-1",
+                            client_api_key="client-key-a",
+                            limit=300,
+                            count=0,
+                        )
+                    ],
+                )
+                save_config(config_path, config)
+                store = ConfigStore.from_path(config_path)
+
+                proxy_runner = web.AppRunner(create_app(store))
+                await proxy_runner.setup()
+                proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
+                await proxy_site.start()
+
+                try:
+                    async with ClientSession() as session:
+                        async with session.post(
+                            f"http://127.0.0.1:{proxy_port}/chat",
+                            headers={"Authorization": "Bearer client-key-a"},
+                            json={"model": "gpt-5.5", "message": "hello"},
+                        ) as response:
+                            payload = await response.json()
+
+                        async with session.get(
+                            f"http://127.0.0.1:{proxy_port}/client-1/usage"
+                        ) as usage_response:
+                            usage_html = await usage_response.text()
+
+                    self.assertEqual(response.status, 200)
+                    self.assertTrue(payload["ok"])
+                    self.assertIn("$0.019100", usage_html)
+                    spend_payload = json.loads(
+                        (Path(temp_dir) / "cache" / "daily-spend.json").read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(spend_payload["date"], date.today().isoformat())
+                    self.assertEqual(spend_payload["total_usd"], "0.019100")
+                    self.assertEqual(spend_payload["clients"]["client-1"], "0.019100")
+                finally:
+                    await proxy_runner.cleanup()
+        finally:
+            await upstream_site.stop()
+            await upstream_runner.cleanup()
+
+    async def test_successful_sse_response_updates_today_usd_spend(self) -> None:
+        upstream_port = _find_free_port()
+        proxy_port = _find_free_port()
+
+        async def upstream_handler(request: web.Request) -> web.StreamResponse:
+            response = web.StreamResponse(
+                status=200,
+                headers={"Content-Type": "text/event-stream"},
+            )
+            await response.prepare(request)
+            await response.write(b'data: {"type":"response.started"}\n\n')
+            await response.write(
+                b'data: {"type":"response.completed","response":{"usage":{"input_tokens":1000,"input_tokens_details":{"cached_tokens":0},"output_tokens":500}}}\n\n'
+            )
+            await response.write(b"data: [DONE]\n\n")
+            await response.write_eof()
+            return response
+
+        upstream_app = web.Application()
+        upstream_app.router.add_post("/{tail:.*}", upstream_handler)
+        upstream_runner = web.AppRunner(upstream_app)
+        await upstream_runner.setup()
+        upstream_site = web.TCPSite(upstream_runner, "127.0.0.1", upstream_port)
+        await upstream_site.start()
+
+        try:
+            with TemporaryDirectory() as temp_dir:
+                config_path = Path(temp_dir) / "proxy-config.json"
+                config = ProxyConfig(
+                    listen_host="127.0.0.1",
+                    listen_port=proxy_port,
+                    base_url=f"http://127.0.0.1:{upstream_port}/v1",
+                    upstream_api_key="shared-upstream-key",
+                    clients=[
+                        ClientConfig(
+                            name="client-1",
+                            client_api_key="client-key-a",
+                            limit=300,
+                            count=0,
+                        )
+                    ],
+                )
+                save_config(config_path, config)
+                store = ConfigStore.from_path(config_path)
+
+                proxy_runner = web.AppRunner(create_app(store))
+                await proxy_runner.setup()
+                proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
+                await proxy_site.start()
+
+                try:
+                    async with ClientSession() as session:
+                        async with session.post(
+                            f"http://127.0.0.1:{proxy_port}/chat",
+                            headers={"Authorization": "Bearer client-key-a"},
+                            json={"model": "gpt-5.5", "message": "hello"},
+                        ) as response:
+                            sse_text = await response.text()
+
+                    self.assertEqual(response.status, 200)
+                    self.assertIn("response.completed", sse_text)
+                    spend_payload = json.loads(
+                        (Path(temp_dir) / "cache" / "daily-spend.json").read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(spend_payload["total_usd"], "0.020000")
+                finally:
+                    await proxy_runner.cleanup()
+        finally:
+            await upstream_site.stop()
+            await upstream_runner.cleanup()
+
     async def test_usage_page_shows_current_client_usage_without_incrementing_count(self) -> None:
         proxy_port = _find_free_port()
 
@@ -413,6 +562,8 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("client-1", html)
                 self.assertIn("2026/5/3 21:32:39", html)
                 self.assertIn("Auto update failed", html)
+                self.assertIn(f"Today USD ({date.today().isoformat()})", html)
+                self.assertIn("$0.000000", html)
                 self.assertNotIn("unlock_last", html)
                 self.assertNotIn("UNLOCK LAST ACTIVE", html)
                 self.assertNotIn("client-key-a", html)

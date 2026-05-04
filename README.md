@@ -19,6 +19,7 @@ Single-port reverse proxy for Codex-compatible upstreams with per-client API key
 - Supports `record: true` to capture full downstream/upstream debug records
 - Supports `unlock_last: true` to disable all client limits during the last hour before `expire-time`
 - Supports model-based count costs from `model-costs.json`
+- Supports model-based USD pricing from `model-pricing.json`
 - Exposes a simple usage page at `/<client_name>/usage`
 - Auto-runs `codex exec "hello" --skip-git-repo-check` when expire time is reached
 
@@ -133,6 +134,8 @@ The page shows:
 - used usage: `count`
 - total limit: `limit`
 - usage percent
+- today's client USD spend
+- today's total USD spend
 
 Notes:
 
@@ -141,6 +144,7 @@ Notes:
 - after `reset --client ...` or `reset --all`, the page reflects the new count immediately
 - if automatic expire-time update fails, the page shows a restart notice
 - if `unlock_last` is currently active, the page shows a red `UNLOCK LAST ACTIVE` badge
+- daily USD totals are stored in `cache/daily-spend.json`
 
 ## Expire Time Cache And Auto Update
 
@@ -198,6 +202,29 @@ Current default:
   "other": 1
 }
 ```
+
+## Model Pricing
+
+The proxy reads token pricing from `model-pricing.json`.
+
+Lookup rule:
+
+- first try `model-pricing.json` beside your config file
+- if that file does not exist, use the bundled project `model-pricing.json`
+
+The bundled file uses standard short-context prices and computes:
+
+- non-cached input cost
+- cached input cost
+- output cost
+
+Unknown models currently fall back to `other`, which is `0` by default. Add exact model names to your local `model-pricing.json` if you want those requests counted in USD.
+
+The proxy calculates today's USD totals only when the upstream response contains parseable token `usage` data, for example:
+
+- JSON responses with `usage.input_tokens` / `usage.output_tokens`
+- JSON responses with `usage.prompt_tokens` / `usage.completion_tokens`
+- SSE responses whose final events include a `usage` object
 
 ## Auth Behavior
 

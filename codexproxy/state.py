@@ -53,6 +53,10 @@ class ConfigStore:
         return self._config.listen_host
 
     @property
+    def config_path(self) -> Path:
+        return self._path
+
+    @property
     def listen_port(self) -> int:
         return self._config.listen_port
 

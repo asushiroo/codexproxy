@@ -16,6 +16,7 @@ from codexproxy.debug_record import (
     save_debug_record,
 )
 from codexproxy.expiry_manager import ExpiryManager
+from codexproxy.spend_tracker import SpendTracker, TokenUsage
 from codexproxy.state import (
     ClientApiKeyNotConfiguredError,
     ClientNameNotConfiguredError,
@@ -37,6 +38,7 @@ HOP_BY_HOP_HEADERS = {
 CONFIG_STORE_KEY = web.AppKey("config_store", ConfigStore)
 CLIENT_SESSION_KEY = web.AppKey("client_session", ClientSession)
 EXPIRY_MANAGER_KEY = web.AppKey("expiry_manager", ExpiryManager)
+SPEND_TRACKER_KEY = web.AppKey("spend_tracker", SpendTracker)
 
 
 def build_target_url(base_url: str, request_url: URL) -> URL:
@@ -133,9 +135,14 @@ def format_record_log_line(
     return " ".join(parts)
 
 
-def create_app(store: ConfigStore, expiry_manager: ExpiryManager | None = None) -> web.Application:
+def create_app(
+    store: ConfigStore,
+    expiry_manager: ExpiryManager | None = None,
+    spend_tracker: SpendTracker | None = None,
+) -> web.Application:
     app = web.Application()
     app[CONFIG_STORE_KEY] = store
+    app[SPEND_TRACKER_KEY] = spend_tracker or SpendTracker(store.config_path.parent)
     if expiry_manager is not None:
         app[EXPIRY_MANAGER_KEY] = expiry_manager
 
@@ -173,6 +180,7 @@ async def handle_usage_request(request: web.Request) -> web.Response:
                 if EXPIRY_MANAGER_KEY in request.app
                 else None
             ),
+            spend_status=request.app[SPEND_TRACKER_KEY].get_status(binding.name),
         ),
         content_type="text/html",
     )
@@ -310,12 +318,23 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
                 headers=_forward_response_headers(upstream_response.headers),
             )
             await downstream.prepare(request)
-            recorded_response_body = bytearray() if store.record else None
+            recorded_response_body = bytearray()
             async for chunk in upstream_response.content.iter_chunked(64 * 1024):
                 if recorded_response_body is not None:
                     recorded_response_body.extend(chunk)
                 await downstream.write(chunk)
             await downstream.write_eof()
+
+            usage = _extract_usage_from_response(
+                body=bytes(recorded_response_body),
+                headers=upstream_response.headers,
+            )
+            if usage is not None and upstream_response.status < 400:
+                request.app[SPEND_TRACKER_KEY].record_usage(
+                    client_name=binding.name,
+                    model_name=request_model,
+                    usage=usage,
+                )
 
             if recorded_response_body is not None and downstream_request_snapshot and upstream_request_snapshot:
                 upstream_response_snapshot = build_http_message_snapshot(
@@ -516,6 +535,100 @@ def _extract_request_model_name(body: bytes, headers: Mapping[str, str]) -> str 
     return model_name.strip()
 
 
+def _extract_usage_from_response(body: bytes, headers: Mapping[str, str]) -> TokenUsage | None:
+    if not body:
+        return None
+
+    content_type = _extract_content_type(headers)
+    if content_type is None:
+        return None
+
+    charset = _extract_charset(headers)
+    try:
+        text = body.decode(charset)
+    except (LookupError, UnicodeDecodeError):
+        return None
+
+    if _is_json_content_type(content_type):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        return _extract_usage_from_payload(payload)
+
+    if content_type == "text/event-stream":
+        return _extract_usage_from_sse_text(text)
+
+    return None
+
+
+def _extract_usage_from_payload(payload: object) -> TokenUsage | None:
+    if not isinstance(payload, dict):
+        return None
+
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        extracted = _usage_dict_to_token_usage(usage)
+        if extracted is not None:
+            return extracted
+
+    response = payload.get("response")
+    if isinstance(response, dict):
+        usage = response.get("usage")
+        if isinstance(usage, dict):
+            return _usage_dict_to_token_usage(usage)
+
+    return None
+
+
+def _extract_usage_from_sse_text(text: str) -> TokenUsage | None:
+    last_usage: TokenUsage | None = None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload_text = line[5:].strip()
+        if not payload_text or payload_text == "[DONE]":
+            continue
+        try:
+            payload = json.loads(payload_text)
+        except json.JSONDecodeError:
+            continue
+        usage = _extract_usage_from_payload(payload)
+        if usage is not None:
+            last_usage = usage
+    return last_usage
+
+
+def _usage_dict_to_token_usage(usage: Mapping[str, object]) -> TokenUsage | None:
+    input_tokens = _extract_int(usage.get("input_tokens"))
+    cached_input_tokens = 0
+    output_tokens = _extract_int(usage.get("output_tokens"))
+
+    input_details = usage.get("input_tokens_details")
+    if isinstance(input_details, dict):
+        cached_input_tokens = _extract_int(input_details.get("cached_tokens"))
+
+    if input_tokens == 0 and output_tokens == 0:
+        prompt_tokens = _extract_int(usage.get("prompt_tokens"))
+        completion_tokens = _extract_int(usage.get("completion_tokens"))
+        if prompt_tokens == 0 and completion_tokens == 0:
+            return None
+        input_tokens = prompt_tokens
+        output_tokens = completion_tokens
+
+        prompt_details = usage.get("prompt_tokens_details")
+        if isinstance(prompt_details, dict):
+            cached_input_tokens = _extract_int(prompt_details.get("cached_tokens"))
+
+    cached_input_tokens = min(cached_input_tokens, input_tokens)
+    return TokenUsage(
+        input_tokens=input_tokens,
+        cached_input_tokens=cached_input_tokens,
+        output_tokens=output_tokens,
+    )
+
+
 def _extract_charset(headers: Mapping[str, str]) -> str:
     header_value = headers.get("Content-Type", "")
     for segment in header_value.split(";")[1:]:
@@ -523,6 +636,12 @@ def _extract_charset(headers: Mapping[str, str]) -> str:
         if separator and key.lower() == "charset" and value:
             return value.strip().strip('"')
     return "utf-8"
+
+
+def _extract_int(value: object) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return max(value, 0)
+    return 0
 
 
 def _render_record_body(body: bytes, headers: Mapping[str, str]) -> str:
