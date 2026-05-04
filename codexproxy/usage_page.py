@@ -14,6 +14,7 @@ def render_usage_page(binding: ClientBinding, expiry_status: ExpiryStatus | None
     client_name = escape(binding.name)
     expire_time_text = escape(expiry_status.expire_time_text or "Not set") if expiry_status else "Not set"
     auto_update_enabled = "enabled" if expiry_status and expiry_status.auto_update_enabled else "disabled"
+    unlock_last_badge_html = _render_unlock_last_badge(expiry_status)
     notice_html = ""
     if expiry_status and expiry_status.notice:
         notice_html = (
@@ -38,11 +39,13 @@ def render_usage_page(binding: ClientBinding, expiry_status: ExpiryStatus | None
     .value {{ font-size: 28px; font-weight: 700; }}
     .meta {{ margin-top: 24px; color: #4b5563; line-height: 1.7; word-break: break-all; }}
     .notice {{ margin-top: 20px; padding: 14px 16px; border-radius: 12px; background: #fff7ed; color: #9a3412; border: 1px solid #fdba74; }}
+    .unlock-last-badge {{ display: inline-block; margin-top: 16px; padding: 10px 14px; border-radius: 999px; background: #dc2626; color: #ffffff; font-size: 13px; font-weight: 800; letter-spacing: 0.04em; box-shadow: 0 8px 20px rgba(220,38,38,0.25); }}
   </style>
 </head>
 <body>
   <div class=\"card\">
     <h1>Client Usage</h1>
+    {unlock_last_badge_html}
     <div class=\"meta\">
       <div><strong>client</strong>: {client_name}</div>
       <div><strong>expire_time</strong>: {expire_time_text}</div>
@@ -71,3 +74,11 @@ def render_usage_page(binding: ClientBinding, expiry_status: ExpiryStatus | None
 </body>
 </html>
 """
+
+
+def _render_unlock_last_badge(expiry_status: ExpiryStatus | None) -> str:
+    if expiry_status is None:
+        return ""
+    if not expiry_status.unlock_last_enabled or not expiry_status.unlock_last_active:
+        return ""
+    return '<div class="unlock-last-badge">UNLOCK LAST ACTIVE</div>'

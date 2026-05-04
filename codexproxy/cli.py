@@ -81,6 +81,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite the target config file if it already exists.",
     )
+    init_parser.add_argument(
+        "--unlock-last",
+        action="store_true",
+        help="Disable all client limits during the last hour before expire-time.",
+    )
 
     new_client_parser = subparsers.add_parser("new-client", help="Append one generated client to the config.")
     _add_config_argument(new_client_parser)
@@ -109,6 +114,7 @@ def main() -> None:
             client_count=args.client_count,
             client_name_suffix_length=args.client_name_suffix_length,
             force=args.force,
+            unlock_last=args.unlock_last,
         )
         return
 
@@ -151,6 +157,7 @@ def _init_config_command(
     client_count: int,
     client_name_suffix_length: int,
     force: bool,
+    unlock_last: bool,
 ) -> None:
     if config_path.exists() and not force:
         raise SystemExit(f"{config_path} already exists. Use --force to overwrite it.")
@@ -165,6 +172,7 @@ def _init_config_command(
         client_count=client_count,
         listen_port=DEFAULT_LISTEN_PORT,
         client_name_suffix_length=client_name_suffix_length,
+        unlock_last=unlock_last,
     )
     save_config(config_path, config)
     print(

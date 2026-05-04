@@ -19,6 +19,8 @@ class ExpiryStatus:
     expire_time_text: str | None
     auto_update_enabled: bool
     notice: str | None = None
+    unlock_last_enabled: bool = False
+    unlock_last_active: bool = False
 
 
 class ExpiryManager:
@@ -31,6 +33,7 @@ class ExpiryManager:
         working_dir: Path,
         codex_executable: str,
         on_update_success: Callable[[], object] | None = None,
+        unlock_last: bool = False,
     ) -> None:
         self._expire_time = expire_time
         self._cache_path = cache_path
@@ -38,6 +41,7 @@ class ExpiryManager:
         self._working_dir = working_dir
         self._codex_executable = codex_executable
         self._on_update_success = on_update_success
+        self._unlock_last = unlock_last
         self._notice: str | None = None
         self._auto_update_enabled = True
         self._task: asyncio.Task | None = None
@@ -49,6 +53,7 @@ class ExpiryManager:
         config_path: Path,
         expire_time_text: str | None,
         on_update_success: Callable[[], object] | None = None,
+        unlock_last: bool = False,
     ) -> "ExpiryManager":
         cache_path = config_path.parent / CACHE_DIR_NAME / CACHE_FILE_NAME
         error_log_path = config_path.parent / ERROR_LOG_PATH
@@ -64,6 +69,7 @@ class ExpiryManager:
                 working_dir=working_dir,
                 codex_executable=codex_executable,
                 on_update_success=on_update_success,
+                unlock_last=unlock_last,
             )
             manager._save_cache()
             return manager
@@ -82,6 +88,7 @@ class ExpiryManager:
             working_dir=working_dir,
             codex_executable=codex_executable,
             on_update_success=on_update_success,
+            unlock_last=unlock_last,
         )
 
     @property
@@ -92,11 +99,18 @@ class ExpiryManager:
     def codex_executable(self) -> str:
         return self._codex_executable
 
+    def is_last_hour_unlocked(self) -> bool:
+        if not self._unlock_last or not self._auto_update_enabled:
+            return False
+        return datetime.now() >= self._expire_time - timedelta(hours=1)
+
     def get_status(self) -> ExpiryStatus:
         return ExpiryStatus(
             expire_time_text=(format_expire_time(self._expire_time) if self._expire_time is not None else None),
             auto_update_enabled=self._auto_update_enabled,
             notice=self._notice,
+            unlock_last_enabled=self._unlock_last,
+            unlock_last_active=self.is_last_hour_unlocked(),
         )
 
     def start(self) -> None:

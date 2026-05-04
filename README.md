@@ -17,6 +17,7 @@ Single-port reverse proxy for Codex-compatible upstreams with per-client API key
 - Prints the current expire time at startup
 - Prints one log line per request with the latest per-client count
 - Supports `record: true` to capture full downstream/upstream debug records
+- Supports `unlock_last: true` to disable all client limits during the last hour before `expire-time`
 - Exposes a simple usage page at `/<client_name>/usage`
 - Auto-runs `codex exec "hello" --skip-git-repo-check` when expire time is reached
 
@@ -41,6 +42,17 @@ uv run codexproxy init-config \
   --upstream-api-key sk-your-real-upstream-key \
   --client-count 2 \
   --client-name-suffix-length 6
+```
+
+Optional: enable last-hour unlimited mode:
+
+```bash
+uv run codexproxy init-config \
+  --config proxy-config.json \
+  --base-url https://your-upstream.example/v1 \
+  --upstream-api-key sk-your-real-upstream-key \
+  --client-count 2 \
+  --unlock-last
 ```
 
 Add one more client later:
@@ -113,6 +125,7 @@ Notes:
 - the page reads directly from the current JSON config state
 - after `reset --client ...` or `reset --all`, the page reflects the new count immediately
 - if automatic expire-time update fails, the page shows a restart notice
+- if `unlock_last` is currently active, the page shows a red `UNLOCK LAST ACTIVE` badge
 
 ## Expire Time Cache And Auto Update
 
@@ -147,6 +160,12 @@ If the command fails:
 - further automatic updates stop
 - the usage page shows a notice asking for manual restart with `--expire-time`
 
+If `unlock_last` is `true`:
+
+- during the last hour before the current `expire-time`, all client `limit` checks are disabled
+- requests during that unlock window still increment `count`
+- if automatic update fails, unlock mode stops with the failed schedule and manual restart is required
+
 ## Auth Behavior
 
 The proxy accepts downstream client credentials from any of these headers:
@@ -176,6 +195,7 @@ When `record` is `true`, the proxy captures the full downstream request, the rew
   "upstream_api_key": "sk-your-real-upstream-key",
   "client_name_suffix_length": 4,
   "record": false,
+  "unlock_last": false,
   "clients": [
     {
       "name": "client-a1b2",

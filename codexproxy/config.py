@@ -34,6 +34,7 @@ class ProxyConfig:
     client_name_suffix_length: int = DEFAULT_CLIENT_NAME_SUFFIX_LENGTH
     advertise_host: str | None = None
     record: bool = False
+    unlock_last: bool = False
 
 
 def build_default_config(
@@ -45,6 +46,7 @@ def build_default_config(
     listen_port: int = DEFAULT_LISTEN_PORT,
     advertise_host: str | None = None,
     record: bool = False,
+    unlock_last: bool = False,
 ) -> ProxyConfig:
     config = ProxyConfig(
         listen_host="0.0.0.0",
@@ -55,6 +57,7 @@ def build_default_config(
         client_name_suffix_length=client_name_suffix_length,
         advertise_host=advertise_host,
         record=record,
+        unlock_last=unlock_last,
     )
     for _ in range(client_count):
         add_new_client(config)
@@ -80,6 +83,7 @@ def load_config(path: Path) -> ProxyConfig:
             ),
             advertise_host=payload.get("advertise_host"),
             record=payload.get("record", False),
+            unlock_last=payload.get("unlock_last", False),
         )
         validate_config(config)
         return config
@@ -95,6 +99,7 @@ def save_config(path: Path, config: ProxyConfig) -> None:
         "upstream_api_key": config.upstream_api_key,
         "client_name_suffix_length": config.client_name_suffix_length,
         "record": config.record,
+        "unlock_last": config.unlock_last,
         "clients": [asdict(item) for item in config.clients],
     }
     if config.advertise_host:
@@ -121,6 +126,8 @@ def validate_config(config: ProxyConfig) -> None:
         raise ValueError("advertise_host cannot be blank when provided.")
     if not isinstance(config.record, bool):
         raise ValueError("record must be a boolean.")
+    if not isinstance(config.unlock_last, bool):
+        raise ValueError("unlock_last must be a boolean.")
     if not config.upstream_api_key:
         raise ValueError("upstream_api_key must be non-empty.")
     if config.client_name_suffix_length < 1:
@@ -222,6 +229,7 @@ def _load_legacy_client_scoped_config(payload: dict) -> ProxyConfig:
         ),
         advertise_host=payload.get("advertise_host"),
         record=payload.get("record", False),
+        unlock_last=payload.get("unlock_last", False),
     )
     validate_config(config)
     return config

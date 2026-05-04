@@ -55,6 +55,67 @@ class ExpiryManagerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(first.expire_time_text, "2026/5/3 21:32:39")
             self.assertEqual(second.expire_time_text, "2026/5/3 21:32:39")
 
+    def test_unlock_last_is_active_during_final_hour(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "proxy-config.json"
+            manager = ExpiryManager.from_runtime(
+                config_path=config_path,
+                expire_time_text="2026/5/3 21:32:39",
+                unlock_last=True,
+            )
+
+            real_datetime = expiry_manager_module.datetime
+
+            class FakeDateTime(real_datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return cls(2026, 5, 3, 21, 0, 0)
+
+            with patch.object(expiry_manager_module, "datetime", FakeDateTime):
+                self.assertTrue(manager.is_last_hour_unlocked())
+
+    def test_unlock_last_is_disabled_after_auto_update_failure(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "proxy-config.json"
+            manager = ExpiryManager.from_runtime(
+                config_path=config_path,
+                expire_time_text="2026/5/3 21:32:39",
+                unlock_last=True,
+            )
+            manager._auto_update_enabled = False
+
+            real_datetime = expiry_manager_module.datetime
+
+            class FakeDateTime(real_datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return cls(2026, 5, 3, 21, 0, 0)
+
+            with patch.object(expiry_manager_module, "datetime", FakeDateTime):
+                self.assertFalse(manager.is_last_hour_unlocked())
+
+    def test_get_status_includes_unlock_last_state(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "proxy-config.json"
+            manager = ExpiryManager.from_runtime(
+                config_path=config_path,
+                expire_time_text="2026/5/3 21:32:39",
+                unlock_last=True,
+            )
+
+            real_datetime = expiry_manager_module.datetime
+
+            class FakeDateTime(real_datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return cls(2026, 5, 3, 21, 0, 0)
+
+            with patch.object(expiry_manager_module, "datetime", FakeDateTime):
+                status = manager.get_status()
+
+            self.assertTrue(status.unlock_last_enabled)
+            self.assertTrue(status.unlock_last_active)
+
     async def test_update_failure_deletes_cache_and_writes_error_log(self) -> None:
         with TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "proxy-config.json"

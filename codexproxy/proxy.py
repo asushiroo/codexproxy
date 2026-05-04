@@ -184,6 +184,7 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
     local_port = _resolve_local_port(request)
     client_base_url = build_client_base_url(store.listen_host, local_port, store.advertise_host)
     client_api_key = _extract_client_api_key(request.headers)
+    unlock_last_active = _is_unlock_last_active(request)
 
     if client_api_key is None:
         print(
@@ -205,7 +206,10 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
         )
 
     try:
-        binding = store.reserve_request(client_api_key)
+        binding = store.reserve_request(
+            client_api_key,
+            enforce_limit=not unlock_last_active,
+        )
     except ClientApiKeyNotConfiguredError:
         print(
             format_request_log_line(
@@ -367,6 +371,7 @@ async def run_proxy(config_path: Path, *, expire_time: str | None = None) -> Non
         config_path=config_path,
         expire_time_text=expire_time,
         on_update_success=store.reset_all,
+        unlock_last=store.unlock_last,
     )
     print(f"Expire time: {expiry_manager.expire_time_text}")
     print(f"Codex executable: {expiry_manager.codex_executable}")
@@ -415,6 +420,15 @@ def _record_debug_artifacts(
     )
     file_path = save_debug_record(record)
     print(format_debug_record_summary(record, file_path=file_path))
+
+
+def _is_unlock_last_active(request: web.Request) -> bool:
+    if EXPIRY_MANAGER_KEY not in request.app:
+        return False
+    store = request.app[CONFIG_STORE_KEY]
+    if not store.unlock_last:
+        return False
+    return request.app[EXPIRY_MANAGER_KEY].is_last_hour_unlocked()
 
 
 def _resolve_local_port(request: web.Request) -> int:

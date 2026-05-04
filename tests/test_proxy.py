@@ -29,17 +29,35 @@ def _find_free_port() -> int:
 
 
 class _FakeExpiryManager:
+    def __init__(
+        self,
+        *,
+        unlock_last_enabled: bool = False,
+        last_hour_unlocked: bool = False,
+        auto_update_enabled: bool = False,
+        notice: str | None = "Auto update failed. Restart manually with --expire-time to set a new expire time.",
+    ) -> None:
+        self._unlock_last_enabled = unlock_last_enabled
+        self._last_hour_unlocked = last_hour_unlocked
+        self._auto_update_enabled = auto_update_enabled
+        self._notice = notice
+
     def start(self) -> None:
         return None
 
     async def stop(self) -> None:
         return None
 
+    def is_last_hour_unlocked(self) -> bool:
+        return self._last_hour_unlocked
+
     def get_status(self) -> ExpiryStatus:
         return ExpiryStatus(
             expire_time_text="2026/5/3 21:32:39",
-            auto_update_enabled=False,
-            notice="Auto update failed. Restart manually with --expire-time to set a new expire time.",
+            auto_update_enabled=self._auto_update_enabled,
+            notice=self._notice,
+            unlock_last_enabled=self._unlock_last_enabled,
+            unlock_last_active=self._last_hour_unlocked,
         )
 
 
@@ -278,10 +296,62 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("client-1", html)
                 self.assertIn("2026/5/3 21:32:39", html)
                 self.assertIn("Auto update failed", html)
+                self.assertNotIn("unlock_last", html)
+                self.assertNotIn("UNLOCK LAST ACTIVE", html)
                 self.assertNotIn("client-key-a", html)
 
                 reloaded = ConfigStore.from_path(config_path)
                 self.assertEqual(reloaded.list_clients()[0].count, 12)
+            finally:
+                await proxy_runner.cleanup()
+
+    async def test_usage_page_shows_active_unlock_last_window(self) -> None:
+        proxy_port = _find_free_port()
+
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "proxy-config.json"
+            config = ProxyConfig(
+                listen_host="127.0.0.1",
+                listen_port=proxy_port,
+                base_url="http://127.0.0.1:1/v1",
+                upstream_api_key="shared-upstream-key",
+                clients=[
+                    ClientConfig(
+                        name="client-1",
+                        client_api_key="client-key-a",
+                        limit=300,
+                        count=12,
+                    )
+                ],
+                unlock_last=True,
+            )
+            save_config(config_path, config)
+            store = ConfigStore.from_path(config_path)
+
+            proxy_runner = web.AppRunner(
+                create_app(
+                    store,
+                    expiry_manager=_FakeExpiryManager(
+                        unlock_last_enabled=True,
+                        last_hour_unlocked=True,
+                        auto_update_enabled=True,
+                        notice=None,
+                    ),
+                )
+            )
+            await proxy_runner.setup()
+            proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
+            await proxy_site.start()
+
+            try:
+                async with ClientSession() as session:
+                    async with session.get(
+                        f"http://127.0.0.1:{proxy_port}/client-1/usage"
+                    ) as response:
+                        html = await response.text()
+
+                self.assertEqual(response.status, 200)
+                self.assertIn("UNLOCK LAST ACTIVE", html)
             finally:
                 await proxy_runner.cleanup()
 
@@ -422,6 +492,66 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(reloaded.list_clients()[0].count, 0)
             finally:
                 await proxy_runner.cleanup()
+
+    async def test_unlock_last_allows_over_limit_requests_and_continues_incrementing_count(self) -> None:
+        upstream_port = _find_free_port()
+        proxy_port = _find_free_port()
+
+        async def upstream_handler(request: web.Request) -> web.Response:
+            return web.json_response({"ok": True})
+
+        upstream_app = web.Application()
+        upstream_app.router.add_get("/{tail:.*}", upstream_handler)
+        upstream_runner = web.AppRunner(upstream_app)
+        await upstream_runner.setup()
+        upstream_site = web.TCPSite(upstream_runner, "127.0.0.1", upstream_port)
+        await upstream_site.start()
+
+        try:
+            with TemporaryDirectory() as temp_dir:
+                config_path = Path(temp_dir) / "proxy-config.json"
+                config = ProxyConfig(
+                    listen_host="127.0.0.1",
+                    listen_port=proxy_port,
+                    base_url=f"http://127.0.0.1:{upstream_port}/v1",
+                    upstream_api_key="shared-upstream-key",
+                    clients=[
+                        ClientConfig(
+                            name="client-1",
+                            client_api_key="client-key-a",
+                            limit=1,
+                            count=1,
+                        )
+                    ],
+                    unlock_last=True,
+                )
+                save_config(config_path, config)
+                store = ConfigStore.from_path(config_path)
+
+                proxy_runner = web.AppRunner(
+                    create_app(store, expiry_manager=_FakeExpiryManager(last_hour_unlocked=True))
+                )
+                await proxy_runner.setup()
+                proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
+                await proxy_site.start()
+
+                try:
+                    async with ClientSession() as session:
+                        async with session.get(
+                            f"http://127.0.0.1:{proxy_port}/chat",
+                            headers={"Authorization": "Bearer client-key-a"},
+                        ) as response:
+                            payload = await response.json()
+
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(payload, {"ok": True})
+                    reloaded = ConfigStore.from_path(config_path)
+                    self.assertEqual(reloaded.list_clients()[0].count, 2)
+                finally:
+                    await proxy_runner.cleanup()
+        finally:
+            await upstream_site.stop()
+            await upstream_runner.cleanup()
 
     async def test_record_true_saves_full_debug_record_and_prints_summary(self) -> None:
         upstream_port = _find_free_port()

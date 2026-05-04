@@ -111,6 +111,30 @@ class CliTests(unittest.TestCase):
                 6,
             )
 
+    def test_init_config_supports_unlock_last(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "proxy-config.json"
+
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "codexproxy",
+                    "init-config",
+                    "--config",
+                    str(config_path),
+                    "--base-url",
+                    "https://example.invalid/v1",
+                    "--upstream-api-key",
+                    "shared-upstream-key",
+                    "--unlock-last",
+                ],
+            ):
+                main()
+
+            config = load_config(config_path)
+            self.assertTrue(config.unlock_last)
+
     def test_default_run_passes_expire_time_argument(self) -> None:
         with patch("codexproxy.cli._run_command") as mocked_run_command:
             with patch.object(

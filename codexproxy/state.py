@@ -65,23 +65,34 @@ class ConfigStore:
     def record(self) -> bool:
         return self._config.record
 
+    @property
+    def unlock_last(self) -> bool:
+        return self._config.unlock_last
+
     def list_clients(self) -> list[ClientBinding]:
         with self._lock:
             return [self._build_binding(client) for client in self._config.clients]
 
-    def reserve_request(self, client_api_key: str) -> ClientBinding:
+    def reserve_request(
+        self,
+        client_api_key: str,
+        *,
+        enforce_limit: bool = True,
+        increment_count: bool = True,
+    ) -> ClientBinding:
         with self._lock:
             index = self._client_api_key_to_index(client_api_key)
             client = self._config.clients[index]
-            if client.count >= client.limit:
+            if enforce_limit and client.count >= client.limit:
                 raise RequestLimitReachedError(
                     client_name=client.name,
                     limit=client.limit,
                     count=client.count,
                 )
 
-            client.count += 1
-            save_config(self._path, self._config)
+            if increment_count:
+                client.count += 1
+                save_config(self._path, self._config)
             return self._build_binding(client)
 
     def rollback_request(self, client_api_key: str) -> ClientBinding:

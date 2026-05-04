@@ -48,6 +48,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.clients[1].count, 0)
         self.assertNotEqual(config.clients[0].client_api_key, config.clients[1].client_api_key)
         self.assertFalse(config.record)
+        self.assertFalse(config.unlock_last)
 
     def test_add_new_client_generates_random_name_and_unique_key(self) -> None:
         config = build_default_config(
@@ -143,6 +144,23 @@ class ConfigTests(unittest.TestCase):
 
             self.assertTrue(reloaded.record)
 
+    def test_save_and_load_unlock_last_flag(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "proxy-config.json"
+            save_config(
+                config_path,
+                build_default_config(
+                    "https://example.invalid/v1",
+                    "shared-upstream-key",
+                    client_count=1,
+                    unlock_last=True,
+                ),
+            )
+
+            reloaded = load_config(config_path)
+
+            self.assertTrue(reloaded.unlock_last)
+
     def test_load_config_supports_legacy_client_scoped_upstream_when_values_match(self) -> None:
         with TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "proxy-config.json"
@@ -182,3 +200,4 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.clients[0].count, 1)
             self.assertEqual(config.clients[1].count, 2)
             self.assertTrue(config.record)
+            self.assertFalse(config.unlock_last)

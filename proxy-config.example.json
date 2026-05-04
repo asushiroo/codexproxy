@@ -5,6 +5,7 @@
   "base_url": "https://your-upstream.example/v1",
   "upstream_api_key": "sk-your-real-upstream-key",
   "record": false,
+  "unlock_last": false,
   "clients": [
     {
       "name": "client-1",
