@@ -362,6 +362,7 @@ async def run_proxy(config_path: Path, *, expire_time: str | None = None) -> Non
         on_update_success=store.reset_all,
     )
     print(f"Expire time: {expiry_manager.expire_time_text}")
+    print(f"Codex executable: {expiry_manager.codex_executable}")
 
     app = create_app(store, expiry_manager=expiry_manager)
     runner = web.AppRunner(app)

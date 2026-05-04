@@ -21,6 +21,18 @@ class _FakeProcess:
 
 
 class ExpiryManagerTests(unittest.IsolatedAsyncioTestCase):
+    def test_startup_resolves_codex_to_absolute_path(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "proxy-config.json"
+
+            with patch.object(expiry_manager_module.shutil, "which", return_value="/opt/bin/codex"):
+                manager = ExpiryManager.from_runtime(
+                    config_path=config_path,
+                    expire_time_text="2026/5/3 21:32:39",
+                )
+
+            self.assertEqual(manager.codex_executable, "/opt/bin/codex")
+
     def test_first_startup_requires_expire_time_when_cache_missing(self) -> None:
         with TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "proxy-config.json"
@@ -67,13 +79,16 @@ class ExpiryManagerTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "proxy-config.json"
             callback_calls: list[str] = []
+            called_args: list[tuple] = []
             manager = ExpiryManager.from_runtime(
                 config_path=config_path,
                 expire_time_text="2026/5/3 21:32:39",
                 on_update_success=lambda: callback_calls.append("reset"),
             )
+            manager._codex_executable = "/opt/bin/codex"
 
             async def fake_create_subprocess_exec(*args, **kwargs):
+                called_args.append(args)
                 return _FakeProcess(returncode=0, stdout=b"ok", stderr=b"")
 
             real_datetime = expiry_manager_module.datetime
@@ -90,5 +105,6 @@ class ExpiryManagerTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(updated)
             self.assertEqual(manager.expire_time_text, "2026/5/4 22:00:00")
             self.assertEqual(callback_calls, ["reset"])
+            self.assertEqual(called_args[0][0], "/opt/bin/codex")
             cached_text = (Path(temp_dir) / "cache" / "expire-time.json").read_text(encoding="utf-8")
             self.assertIn("2026/5/4 22:00:00", cached_text)

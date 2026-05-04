@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -28,12 +29,14 @@ class ExpiryManager:
         cache_path: Path,
         error_log_path: Path,
         working_dir: Path,
+        codex_executable: str,
         on_update_success: Callable[[], object] | None = None,
     ) -> None:
         self._expire_time = expire_time
         self._cache_path = cache_path
         self._error_log_path = error_log_path
         self._working_dir = working_dir
+        self._codex_executable = codex_executable
         self._on_update_success = on_update_success
         self._notice: str | None = None
         self._auto_update_enabled = True
@@ -50,6 +53,7 @@ class ExpiryManager:
         cache_path = config_path.parent / CACHE_DIR_NAME / CACHE_FILE_NAME
         error_log_path = config_path.parent / ERROR_LOG_PATH
         working_dir = config_path.parent
+        codex_executable = shutil.which("codex") or "codex"
 
         if expire_time_text is not None:
             expire_time = parse_expire_time(expire_time_text)
@@ -58,6 +62,7 @@ class ExpiryManager:
                 cache_path=cache_path,
                 error_log_path=error_log_path,
                 working_dir=working_dir,
+                codex_executable=codex_executable,
                 on_update_success=on_update_success,
             )
             manager._save_cache()
@@ -75,12 +80,17 @@ class ExpiryManager:
             cache_path=cache_path,
             error_log_path=error_log_path,
             working_dir=working_dir,
+            codex_executable=codex_executable,
             on_update_success=on_update_success,
         )
 
     @property
     def expire_time_text(self) -> str:
         return format_expire_time(self._expire_time)
+
+    @property
+    def codex_executable(self) -> str:
+        return self._codex_executable
 
     def get_status(self) -> ExpiryStatus:
         return ExpiryStatus(
@@ -114,7 +124,7 @@ class ExpiryManager:
         started_expire_time = format_expire_time(self._expire_time)
         try:
             process = await asyncio.create_subprocess_exec(
-                "codex",
+                self._codex_executable,
                 "exec",
                 "hello",
                 "--skip-git-repo-check",

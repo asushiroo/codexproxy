@@ -1,5 +1,7 @@
 AGENTS.md
 **/tmp/
+**/cache/
+**/logs/
 proxy-config.json
 .venv/
 __pycache__/
