@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Lock
 
 from codexproxy.config import ProxyConfig, add_new_client, load_config, save_config
+from codexproxy.model_costs import get_model_cost, load_model_costs
 
 
 class ClientApiKeyNotConfiguredError(Exception):
@@ -18,11 +19,12 @@ class ClientNameNotConfiguredError(Exception):
 class RequestLimitReachedError(Exception):
     """Raised when a configured client reaches its request limit."""
 
-    def __init__(self, client_name: str, limit: int, count: int) -> None:
+    def __init__(self, client_name: str, limit: int, count: int, requested_cost: int = 1) -> None:
         super().__init__(f"Client {client_name} reached its request limit ({limit}).")
         self.client_name = client_name
         self.limit = limit
         self.count = count
+        self.requested_cost = requested_cost
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +41,7 @@ class ConfigStore:
     def __init__(self, path: Path, config: ProxyConfig) -> None:
         self._path = path
         self._config = config
+        self._model_costs = load_model_costs(path.parent)
         self._lock = Lock()
 
     @classmethod
@@ -73,34 +76,39 @@ class ConfigStore:
         with self._lock:
             return [self._build_binding(client) for client in self._config.clients]
 
+    def get_model_cost(self, model_name: str | None) -> int:
+        return get_model_cost(model_name, self._model_costs)
+
     def reserve_request(
         self,
         client_api_key: str,
         *,
         enforce_limit: bool = True,
         increment_count: bool = True,
+        request_cost: int = 1,
     ) -> ClientBinding:
         with self._lock:
             index = self._client_api_key_to_index(client_api_key)
             client = self._config.clients[index]
-            if enforce_limit and client.count >= client.limit:
+            if enforce_limit and client.count + request_cost > client.limit:
                 raise RequestLimitReachedError(
                     client_name=client.name,
                     limit=client.limit,
                     count=client.count,
+                    requested_cost=request_cost,
                 )
 
             if increment_count:
-                client.count += 1
+                client.count += request_cost
                 save_config(self._path, self._config)
             return self._build_binding(client)
 
-    def rollback_request(self, client_api_key: str) -> ClientBinding:
+    def rollback_request(self, client_api_key: str, *, request_cost: int = 1) -> ClientBinding:
         with self._lock:
             index = self._client_api_key_to_index(client_api_key)
             client = self._config.clients[index]
             if client.count > 0:
-                client.count -= 1
+                client.count = max(client.count - request_cost, 0)
                 save_config(self._path, self._config)
             return self._build_binding(client)
 

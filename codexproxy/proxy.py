@@ -205,10 +205,17 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
             status=401,
         )
 
+    has_request_body = request.can_read_body
+    downstream_request_body = await request.read() if has_request_body else b""
+    request_body = downstream_request_body if has_request_body else None
+    request_model = _extract_request_model_name(downstream_request_body, request.headers)
+    request_cost = store.get_model_cost(request_model)
+
     try:
         binding = store.reserve_request(
             client_api_key,
             enforce_limit=not unlock_last_active,
+            request_cost=request_cost,
         )
     except ClientApiKeyNotConfiguredError:
         print(
@@ -248,13 +255,6 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
     forwarded_headers = _forward_request_headers(request.headers)
     _replace_upstream_auth_headers(forwarded_headers, binding.upstream_api_key)
 
-    has_request_body = request.can_read_body
-    downstream_request_body = b""
-    request_body = request.content.iter_chunked(64 * 1024) if has_request_body else None
-    if store.record:
-        downstream_request_body = await request.read() if has_request_body else b""
-        request_body = downstream_request_body if has_request_body else None
-
     downstream_request_snapshot = None
     upstream_request_snapshot = None
     if store.record:
@@ -283,7 +283,7 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
             logged_binding = binding
             log_detail = None
             if upstream_response.status >= 400:
-                logged_binding = store.rollback_request(client_api_key)
+                logged_binding = store.rollback_request(client_api_key, request_cost=request_cost)
                 log_detail = "upstream-status-error"
             print(
                 format_request_log_line(
@@ -329,7 +329,7 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
                 )
             return downstream
     except ClientError as exc:
-        rolled_back_binding = store.rollback_request(client_api_key)
+        rolled_back_binding = store.rollback_request(client_api_key, request_cost=request_cost)
         print(
             format_request_log_line(
                 method=request.method,
@@ -479,6 +479,35 @@ def _extract_content_type(headers: Mapping[str, str]) -> str | None:
     if not header_value:
         return None
     return header_value.split(";", 1)[0].strip().lower() or None
+
+
+def _extract_request_model_name(body: bytes, headers: Mapping[str, str]) -> str | None:
+    if not body:
+        return None
+
+    content_type = _extract_content_type(headers)
+    if content_type is not None and not _is_json_content_type(content_type):
+        return None
+
+    charset = _extract_charset(headers)
+    try:
+        text = body.decode(charset)
+    except (LookupError, UnicodeDecodeError):
+        return None
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    model_name = payload.get("model")
+    if not isinstance(model_name, str) or not model_name.strip():
+        return None
+
+    return model_name.strip()
 
 
 def _extract_charset(headers: Mapping[str, str]) -> str:

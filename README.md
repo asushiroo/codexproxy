@@ -18,6 +18,7 @@ Single-port reverse proxy for Codex-compatible upstreams with per-client API key
 - Prints one log line per request with the latest per-client count
 - Supports `record: true` to capture full downstream/upstream debug records
 - Supports `unlock_last: true` to disable all client limits during the last hour before `expire-time`
+- Supports model-based count costs from `model-costs.json`
 - Exposes a simple usage page at `/<client_name>/usage`
 - Auto-runs `codex exec "hello" --skip-git-repo-check` when expire time is reached
 
@@ -60,6 +61,20 @@ Add one more client later:
 ```bash
 uv run codexproxy --config proxy-config.json new-client
 ```
+
+Default model costs are defined in `model-costs.json`:
+
+```json
+{
+  "gpt-5.5": 3,
+  "other": 1
+}
+```
+
+Counting rule:
+
+- exact match `gpt-5.5` -> consume `3`
+- all other models, or requests without a `model` field -> consume `other`
 
 If `listen_host` is `0.0.0.0`, set `advertise_host` in the config to your real server IP or domain so startup logs print the exact value your downstream clients should fill.
 
@@ -165,6 +180,24 @@ If `unlock_last` is `true`:
 - during the last hour before the current `expire-time`, all client `limit` checks are disabled
 - requests during that unlock window still increment `count`
 - if automatic update fails, unlock mode stops with the failed schedule and manual restart is required
+
+## Model Costs
+
+The proxy reads model count costs from `model-costs.json`.
+
+Lookup rule:
+
+- first try `model-costs.json` beside your config file
+- if that file does not exist, use the bundled project `model-costs.json`
+
+Current default:
+
+```json
+{
+  "gpt-5.5": 3,
+  "other": 1
+}
+```
 
 ## Auth Behavior
 
