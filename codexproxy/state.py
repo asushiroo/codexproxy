@@ -84,6 +84,15 @@ class ConfigStore:
             save_config(self._path, self._config)
             return self._build_binding(client)
 
+    def rollback_request(self, client_api_key: str) -> ClientBinding:
+        with self._lock:
+            index = self._client_api_key_to_index(client_api_key)
+            client = self._config.clients[index]
+            if client.count > 0:
+                client.count -= 1
+                save_config(self._path, self._config)
+            return self._build_binding(client)
+
     def add_new_client(self) -> ClientBinding:
         with self._lock:
             client = add_new_client(self._config)

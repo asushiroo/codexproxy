@@ -276,6 +276,11 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
             allow_redirects=False,
             auto_decompress=False,
         ) as upstream_response:
+            logged_binding = binding
+            log_detail = None
+            if upstream_response.status >= 400:
+                logged_binding = store.rollback_request(client_api_key)
+                log_detail = "upstream-status-error"
             print(
                 format_request_log_line(
                     method=request.method,
@@ -283,9 +288,10 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
                     port=local_port,
                     name=binding.name,
                     status=upstream_response.status,
-                    count=binding.count,
-                    limit=binding.limit,
+                    count=logged_binding.count,
+                    limit=logged_binding.limit,
                     client_base_url=client_base_url,
+                    detail=log_detail,
                 )
             )
             downstream = web.StreamResponse(
@@ -319,6 +325,7 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
                 )
             return downstream
     except ClientError as exc:
+        rolled_back_binding = store.rollback_request(client_api_key)
         print(
             format_request_log_line(
                 method=request.method,
@@ -326,8 +333,8 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
                 port=local_port,
                 name=binding.name,
                 status=502,
-                count=binding.count,
-                limit=binding.limit,
+                count=rolled_back_binding.count,
+                limit=rolled_back_binding.limit,
                 client_base_url=client_base_url,
                 detail="upstream-request-failed",
             )
