@@ -1,4 +1,5 @@
 import json
+import io
 import socket
 from datetime import date
 from pathlib import Path
@@ -129,7 +130,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                 }
             )
 
-        upstream_app = web.Application()
+        upstream_app = web.Application(client_max_size=0)
         upstream_app.router.add_get("/{tail:.*}", upstream_handler)
         upstream_runner = web.AppRunner(upstream_app)
         await upstream_runner.setup()
@@ -254,6 +255,69 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(payload["error"], "missing api key")
             finally:
                 await proxy_runner.cleanup()
+
+    async def test_large_request_body_is_not_rejected_by_proxy_layer(self) -> None:
+        upstream_port = _find_free_port()
+        proxy_port = _find_free_port()
+        large_body = b"x" * 1_100_000
+
+        async def upstream_handler(request: web.Request) -> web.Response:
+            size = 0
+            async for chunk in request.content.iter_chunked(64 * 1024):
+                size += len(chunk)
+            return web.json_response({"size": size})
+
+        upstream_app = web.Application()
+        upstream_app.router.add_post("/{tail:.*}", upstream_handler)
+        upstream_runner = web.AppRunner(upstream_app)
+        await upstream_runner.setup()
+        upstream_site = web.TCPSite(upstream_runner, "127.0.0.1", upstream_port)
+        await upstream_site.start()
+
+        try:
+            with TemporaryDirectory() as temp_dir:
+                config_path = Path(temp_dir) / "proxy-config.json"
+                config = ProxyConfig(
+                    listen_host="127.0.0.1",
+                    listen_port=proxy_port,
+                    base_url=f"http://127.0.0.1:{upstream_port}/v1",
+                    upstream_api_key="shared-upstream-key",
+                    clients=[
+                        ClientConfig(
+                            name="client-1",
+                            client_api_key="client-key-a",
+                            limit=300,
+                            count=0,
+                        )
+                    ],
+                )
+                save_config(config_path, config)
+                store = ConfigStore.from_path(config_path)
+
+                proxy_runner = web.AppRunner(create_app(store))
+                await proxy_runner.setup()
+                proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
+                await proxy_site.start()
+
+                try:
+                    async with ClientSession() as session:
+                        async with session.post(
+                            f"http://127.0.0.1:{proxy_port}/responses",
+                            headers={
+                                "Authorization": "Bearer client-key-a",
+                                "Content-Type": "application/octet-stream",
+                            },
+                            data=io.BytesIO(large_body),
+                        ) as response:
+                            payload = await response.json()
+
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(payload, {"size": len(large_body)})
+                finally:
+                    await proxy_runner.cleanup()
+        finally:
+            await upstream_site.stop()
+            await upstream_runner.cleanup()
 
     async def test_gpt_5_5_request_consumes_three_counts(self) -> None:
         upstream_port = _find_free_port()

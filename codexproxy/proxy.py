@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import socket
 from collections.abc import Mapping
@@ -140,7 +141,7 @@ def create_app(
     expiry_manager: ExpiryManager | None = None,
     spend_tracker: SpendTracker | None = None,
 ) -> web.Application:
-    app = web.Application()
+    app = web.Application(client_max_size=0)
     app[CONFIG_STORE_KEY] = store
     app[SPEND_TRACKER_KEY] = spend_tracker or SpendTracker(store.config_path.parent)
     if expiry_manager is not None:
@@ -215,7 +216,7 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
 
     has_request_body = request.can_read_body
     downstream_request_body = await request.read() if has_request_body else b""
-    request_body = downstream_request_body if has_request_body else None
+    request_body = io.BytesIO(downstream_request_body) if has_request_body else None
     request_model = _extract_request_model_name(downstream_request_body, request.headers)
     request_cost = store.get_model_cost(request_model)
 
