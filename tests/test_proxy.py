@@ -626,8 +626,11 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("client-1", html)
                 self.assertIn("2026/5/3 21:32:39", html)
                 self.assertIn("Auto update failed", html)
-                self.assertIn(f"Today USD ({date.today().isoformat()})", html)
+                self.assertIn(f"Today Total USD ({date.today().isoformat()})", html)
                 self.assertIn("$0.000000", html)
+                self.assertNotIn(f"Today USD ({date.today().isoformat()})", html)
+                self.assertIn('data-progress="4.0"', html)
+                self.assertIn("#16a34a", html)
                 self.assertNotIn("unlock_last", html)
                 self.assertNotIn("UNLOCK LAST ACTIVE", html)
                 self.assertNotIn("client-key-a", html)
@@ -747,6 +750,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(response.status, 200)
                 self.assertIn("UNLOCK LAST ACTIVE", html)
+                self.assertIn('data-progress="4.0"', html)
             finally:
                 await proxy_runner.cleanup()
 

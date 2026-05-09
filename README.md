@@ -133,8 +133,7 @@ The page shows:
 - remaining usage: `limit - count`
 - used usage: `count`
 - total limit: `limit`
-- usage percent
-- today's client USD spend
+- usage percent ring
 - today's total USD spend
 
 Notes:
