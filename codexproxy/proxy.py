@@ -313,10 +313,45 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
                     detail=log_detail,
                 )
             )
+            response_headers = _forward_response_headers(upstream_response.headers)
+            if (
+                upstream_response.status >= 400
+                and _should_normalize_text_error_response(upstream_response.headers)
+            ):
+                recorded_response_body = await upstream_response.read()
+
+                if downstream_request_snapshot and upstream_request_snapshot:
+                    upstream_response_snapshot = build_http_message_snapshot(
+                        method=request.method,
+                        url=str(target_url),
+                        headers=upstream_response.headers,
+                        body=recorded_response_body,
+                        status=upstream_response.status,
+                        reason=upstream_response.reason,
+                    )
+                    _record_debug_artifacts(
+                        client_name=binding.name,
+                        port=local_port,
+                        downstream_request=downstream_request_snapshot,
+                        upstream_request=upstream_request_snapshot,
+                        upstream_response=upstream_response_snapshot,
+                    )
+
+                downstream_body, downstream_headers = _normalize_text_error_response_for_downstream(
+                    body=recorded_response_body,
+                    headers=response_headers,
+                )
+                return web.Response(
+                    status=upstream_response.status,
+                    reason=upstream_response.reason,
+                    headers=downstream_headers,
+                    body=downstream_body,
+                )
+
             downstream = web.StreamResponse(
                 status=upstream_response.status,
                 reason=upstream_response.reason,
-                headers=_forward_response_headers(upstream_response.headers),
+                headers=response_headers,
             )
             await downstream.prepare(request)
             recorded_response_body = bytearray()
@@ -630,13 +665,89 @@ def _usage_dict_to_token_usage(usage: Mapping[str, object]) -> TokenUsage | None
     )
 
 
+def _should_normalize_text_error_response(headers: Mapping[str, str]) -> bool:
+    content_encoding = headers.get("Content-Encoding")
+    if content_encoding and content_encoding.lower() != "identity":
+        return False
+
+    content_type = _extract_content_type(headers)
+    return content_type is None or _is_text_content_type(content_type)
+
+
+def _normalize_text_error_response_for_downstream(
+    *,
+    body: bytes,
+    headers: Mapping[str, str],
+) -> tuple[bytes, dict[str, str]]:
+    if not body:
+        return body, dict(headers.items())
+
+    decoded = _decode_text_error_body(body, headers)
+    if decoded is None:
+        return body, dict(headers.items())
+
+    text, decoded_charset = decoded
+    declared_charset = _extract_declared_charset(headers)
+    if decoded_charset.lower() == "utf-8" and (
+        declared_charset is None or declared_charset.lower() == "utf-8"
+    ):
+        return body, dict(headers.items())
+
+    normalized_headers = dict(headers.items())
+    normalized_headers.pop("Content-Length", None)
+    content_type = normalized_headers.get("Content-Type")
+    if content_type:
+        normalized_headers["Content-Type"] = _replace_charset_in_content_type(
+            content_type,
+            charset="utf-8",
+        )
+
+    return text.encode("utf-8"), normalized_headers
+
+
+def _decode_text_error_body(body: bytes, headers: Mapping[str, str]) -> tuple[str, str] | None:
+    declared_charset = _extract_declared_charset(headers)
+    candidate_charsets = ["utf-8"]
+    if declared_charset and declared_charset.lower() != "utf-8":
+        candidate_charsets.append(declared_charset)
+    if declared_charset is None or declared_charset.lower() == "utf-8":
+        candidate_charsets.append("gb18030")
+
+    for charset in candidate_charsets:
+        try:
+            return body.decode(charset), charset
+        except (LookupError, UnicodeDecodeError):
+            continue
+
+    return None
+
+
 def _extract_charset(headers: Mapping[str, str]) -> str:
+    return _extract_declared_charset(headers) or "utf-8"
+
+
+def _extract_declared_charset(headers: Mapping[str, str]) -> str | None:
     header_value = headers.get("Content-Type", "")
     for segment in header_value.split(";")[1:]:
         key, separator, value = segment.strip().partition("=")
         if separator and key.lower() == "charset" and value:
             return value.strip().strip('"')
-    return "utf-8"
+    return None
+
+
+def _replace_charset_in_content_type(content_type: str, *, charset: str) -> str:
+    segments = [segment.strip() for segment in content_type.split(";") if segment.strip()]
+    if not segments:
+        return f"text/plain; charset={charset}"
+
+    filtered_segments = [segments[0]]
+    for segment in segments[1:]:
+        key, separator, _ = segment.partition("=")
+        if separator and key.strip().lower() == "charset":
+            continue
+        filtered_segments.append(segment)
+    filtered_segments.append(f"charset={charset}")
+    return "; ".join(filtered_segments)
 
 
 def _extract_int(value: object) -> int:

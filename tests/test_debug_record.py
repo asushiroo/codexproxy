@@ -2,7 +2,7 @@ import json
 import unittest
 from pathlib import Path
 
-from codexproxy.debug_record import format_debug_record_summary
+from codexproxy.debug_record import build_http_message_snapshot, format_debug_record_summary
 
 
 class DebugRecordTests(unittest.TestCase):
@@ -28,3 +28,15 @@ class DebugRecordTests(unittest.TestCase):
         self.assertGreater(len(truncated_body.split()), 500)
         self.assertIn("...(truncated 100 words)", truncated_header)
         self.assertIn("...(truncated 100 words)", truncated_body)
+
+    def test_http_message_snapshot_decodes_gb18030_text_without_charset(self) -> None:
+        snapshot = build_http_message_snapshot(
+            method="GET",
+            url="http://example.invalid/chat",
+            headers={"Content-Type": "text/plain"},
+            body="上游返回中文错误".encode("gb18030"),
+            status=403,
+            reason="Forbidden",
+        )
+
+        self.assertEqual(snapshot["body"], "上游返回中文错误")

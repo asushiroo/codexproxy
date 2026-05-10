@@ -84,8 +84,6 @@ def _render_body_value(body: bytes, headers: Mapping[str, str]):
         }
 
     content_type = _extract_content_type(headers)
-    charset = _extract_charset(headers)
-
     if content_type and not _is_text_content_type(content_type):
         return {
             "omitted": True,
@@ -94,9 +92,8 @@ def _render_body_value(body: bytes, headers: Mapping[str, str]):
             "bytes": len(body),
         }
 
-    try:
-        text = body.decode(charset)
-    except (LookupError, UnicodeDecodeError):
+    text = _decode_text_body(body, headers)
+    if text is None:
         return {
             "omitted": True,
             "reason": "binary-body",
@@ -136,13 +133,28 @@ def _extract_content_type(headers: Mapping[str, str]) -> str | None:
     return header_value.split(";", 1)[0].strip().lower() or None
 
 
-def _extract_charset(headers: Mapping[str, str]) -> str:
+def _extract_declared_charset(headers: Mapping[str, str]) -> str | None:
     header_value = headers.get("Content-Type", "")
     for segment in header_value.split(";")[1:]:
         key, separator, value = segment.strip().partition("=")
         if separator and key.lower() == "charset" and value:
             return value.strip().strip('"')
-    return "utf-8"
+    return None
+
+
+def _decode_text_body(body: bytes, headers: Mapping[str, str]) -> str | None:
+    declared_charset = _extract_declared_charset(headers)
+    candidate_charsets = [charset for charset in [declared_charset, "utf-8"] if charset]
+    if declared_charset is None or declared_charset.lower() == "utf-8":
+        candidate_charsets.append("gb18030")
+
+    for charset in candidate_charsets:
+        try:
+            return body.decode(charset)
+        except (LookupError, UnicodeDecodeError):
+            continue
+
+    return None
 
 
 def _is_json_content_type(content_type: str) -> bool:
