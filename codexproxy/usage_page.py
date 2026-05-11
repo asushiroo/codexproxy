@@ -3,6 +3,7 @@ from __future__ import annotations
 from html import escape
 from math import pi
 
+from codexproxy.count_display import round_count_for_display
 from codexproxy.expiry_manager import ExpiryStatus
 from codexproxy.spend_tracker import DailySpendStatus
 from codexproxy.state import ClientBinding
@@ -15,6 +16,9 @@ def render_usage_page(
 ) -> str:
     remaining = max(binding.limit - binding.count, 0)
     usage_percent = 0 if binding.limit == 0 else round((binding.count / binding.limit) * 100, 2)
+    remaining_text = round_count_for_display(remaining)
+    count_text = round_count_for_display(binding.count)
+    limit_text = round_count_for_display(binding.limit)
     ring_percent = min(max(usage_percent, 0), 100)
     ring_size = 176
     ring_center = ring_size / 2
@@ -102,15 +106,15 @@ def render_usage_page(
       <div class=\"stats-grid\">
         <div class=\"item\">
           <div class=\"label\">Remaining</div>
-          <div class=\"value\">{remaining} / {binding.limit}</div>
+          <div class=\"value\">{remaining_text} / {limit_text}</div>
         </div>
         <div class=\"item\">
           <div class=\"label\">Used</div>
-          <div class=\"value\">{binding.count} / {binding.limit}</div>
+          <div class=\"value\">{count_text} / {limit_text}</div>
         </div>
         <div class=\"item\">
           <div class=\"label\">Limit</div>
-          <div class=\"value\">{binding.limit}</div>
+          <div class=\"value\">{limit_text}</div>
         </div>
         <div class=\"item\">
           <div class=\"label\">Today Total USD ({today_date_text})</div>

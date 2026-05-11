@@ -127,6 +127,23 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(reloaded.base_url, "https://example.invalid/v1")
             self.assertEqual(reloaded.upstream_api_key, "shared-upstream-key")
 
+    def test_reserve_request_persists_decimal_count(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "proxy-config.json"
+            config = build_default_config(
+                "https://example.invalid/v1",
+                "shared-upstream-key",
+                client_count=1,
+            )
+            save_config(config_path, config)
+
+            store = ConfigStore.from_path(config_path)
+            binding = store.reserve_request(config.clients[0].client_api_key, request_cost=1.6)
+
+            self.assertEqual(binding.count, 1.6)
+            reloaded = load_config(config_path)
+            self.assertEqual(reloaded.clients[0].count, 1.6)
+
     def test_save_and_load_record_flag(self) -> None:
         with TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "proxy-config.json"

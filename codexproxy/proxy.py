@@ -10,6 +10,7 @@ from pathlib import Path
 from aiohttp import ClientError, ClientSession, ClientTimeout, web
 from yarl import URL
 
+from codexproxy.count_display import round_count_for_display
 from codexproxy.debug_record import (
     build_debug_record,
     build_http_message_snapshot,
@@ -90,8 +91,8 @@ def format_request_log_line(
     client_base_url: str,
     status: int,
     name: str | None = None,
-    count: int | None = None,
-    limit: int | None = None,
+    count: int | float | None = None,
+    limit: int | float | None = None,
     detail: str | None = None,
 ) -> str:
     parts = [
@@ -104,7 +105,9 @@ def format_request_log_line(
         parts.append(f"name={name}")
     parts.append(f"status={status}")
     if count is not None and limit is not None:
-        parts.append(f"count={count}/{limit}")
+        parts.append(
+            f"count={round_count_for_display(count)}/{round_count_for_display(limit)}"
+        )
     parts.append(f"client_base_url={client_base_url}")
     if detail:
         parts.append(f"detail={detail}")
@@ -455,7 +458,12 @@ async def run_proxy(config_path: Path, *, expire_time: str | None = None) -> Non
             f"(clients={len(clients)}, upstream_base_url={store.base_url})"
         )
         for client in clients:
-            print(f"Configured client: name={client.name} limit={client.limit} count={client.count}")
+            print(
+                "Configured client: "
+                f"name={client.name} "
+                f"limit={round_count_for_display(client.limit)} "
+                f"count={round_count_for_display(client.count)}"
+            )
         await asyncio.Event().wait()
     finally:
         await site.stop()

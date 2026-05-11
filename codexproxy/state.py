@@ -19,7 +19,7 @@ class ClientNameNotConfiguredError(Exception):
 class RequestLimitReachedError(Exception):
     """Raised when a configured client reaches its request limit."""
 
-    def __init__(self, client_name: str, limit: int, count: int, requested_cost: int = 1) -> None:
+    def __init__(self, client_name: str, limit: int, count: int | float, requested_cost: float = 1.0) -> None:
         super().__init__(f"Client {client_name} reached its request limit ({limit}).")
         self.client_name = client_name
         self.limit = limit
@@ -33,7 +33,7 @@ class ClientBinding:
     base_url: str
     upstream_api_key: str
     limit: int
-    count: int
+    count: int | float
     client_api_key: str | None = None
 
 
@@ -80,7 +80,7 @@ class ConfigStore:
         with self._lock:
             return [self._build_binding(client) for client in self._config.clients]
 
-    def get_model_cost(self, model_name: str | None) -> int:
+    def get_model_cost(self, model_name: str | None) -> float:
         return get_model_cost(model_name, self._model_costs)
 
     def reserve_request(
@@ -89,7 +89,7 @@ class ConfigStore:
         *,
         enforce_limit: bool = True,
         increment_count: bool = True,
-        request_cost: int = 1,
+        request_cost: float = 1.0,
     ) -> ClientBinding:
         with self._lock:
             index = self._client_api_key_to_index(client_api_key)
@@ -107,7 +107,7 @@ class ConfigStore:
                 save_config(self._path, self._config)
             return self._build_binding(client)
 
-    def rollback_request(self, client_api_key: str, *, request_cost: int = 1) -> ClientBinding:
+    def rollback_request(self, client_api_key: str, *, request_cost: float = 1.0) -> ClientBinding:
         with self._lock:
             index = self._client_api_key_to_index(client_api_key)
             client = self._config.clients[index]

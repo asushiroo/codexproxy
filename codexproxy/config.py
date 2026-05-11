@@ -21,7 +21,7 @@ class ClientConfig:
     name: str
     client_api_key: str
     limit: int = DEFAULT_CLIENT_LIMIT
-    count: int = 0
+    count: int | float = 0
 
 
 @dataclass(slots=True)

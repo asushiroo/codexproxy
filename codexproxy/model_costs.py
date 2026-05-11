@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -9,19 +10,19 @@ DEFAULT_MODEL_COSTS_PATH = Path(__file__).resolve().parent.parent / MODEL_COSTS_
 FALLBACK_MODEL_NAME = "other"
 
 
-def load_model_costs(config_dir: Path | None = None) -> dict[str, int]:
+def load_model_costs(config_dir: Path | None = None) -> dict[str, float]:
     path = resolve_model_costs_path(config_dir)
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"{path} must contain one JSON object.")
 
-    model_costs: dict[str, int] = {}
+    model_costs: dict[str, float] = {}
     for model_name, cost in payload.items():
         if not isinstance(model_name, str) or not model_name.strip():
             raise ValueError(f"{path} contains an invalid model name.")
-        if not isinstance(cost, int) or isinstance(cost, bool) or cost < 1:
-            raise ValueError(f"{path} cost for {model_name!r} must be an integer >= 1.")
-        model_costs[model_name.strip()] = cost
+        if isinstance(cost, bool) or not isinstance(cost, (int, float)) or not math.isfinite(cost) or cost <= 0:
+            raise ValueError(f"{path} cost for {model_name!r} must be a finite number > 0.")
+        model_costs[model_name.strip()] = float(cost)
 
     if FALLBACK_MODEL_NAME not in model_costs:
         raise ValueError(f"{path} must define {FALLBACK_MODEL_NAME!r}.")
@@ -37,7 +38,7 @@ def resolve_model_costs_path(config_dir: Path | None = None) -> Path:
     return DEFAULT_MODEL_COSTS_PATH
 
 
-def get_model_cost(model_name: str | None, model_costs: Mapping[str, int]) -> int:
+def get_model_cost(model_name: str | None, model_costs: Mapping[str, float]) -> float:
     if model_name is None:
         return model_costs[FALLBACK_MODEL_NAME]
 

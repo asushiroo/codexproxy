@@ -101,6 +101,23 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             "REQUEST method=POST path=/v1/chat?stream=true port=7001 name=client-a status=200 count=3/10 client_base_url=http://proxy.example.com:7001",
         )
 
+    async def test_format_request_log_line_rounds_decimal_count_for_display(self) -> None:
+        line = format_request_log_line(
+            method="POST",
+            path="/v1/chat",
+            port=7001,
+            name="client-a",
+            status=200,
+            count=1.6,
+            limit=300,
+            client_base_url="http://proxy.example.com:7001",
+        )
+
+        self.assertEqual(
+            line,
+            "REQUEST method=POST path=/v1/chat port=7001 name=client-a status=200 count=2/300 client_base_url=http://proxy.example.com:7001",
+        )
+
     async def test_format_record_log_line_contains_parsed_body(self) -> None:
         line = format_record_log_line(
             direction="request",

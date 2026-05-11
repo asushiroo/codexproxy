@@ -4,6 +4,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
+from codexproxy.count_display import round_count_for_display
 from codexproxy.config import (
     DEFAULT_CLIENT_COUNT,
     DEFAULT_CLIENT_NAME_SUFFIX_LENGTH,
@@ -146,7 +147,7 @@ def _reset_command(config_path: Path, *, client_name: str | None, reset_all: boo
         binding = store.reset_client(client_name)
     except ClientNameNotConfiguredError as exc:
         raise SystemExit(str(exc)) from exc
-    print(f"Reset client {binding.name} to count={binding.count}.")
+    print(f"Reset client {binding.name} to count={round_count_for_display(binding.count)}.")
 
 
 def _init_config_command(
@@ -186,5 +187,5 @@ def _new_client_command(config_path: Path) -> None:
     binding = store.add_new_client()
     print(
         f"Added client {binding.name} with client_api_key={binding.client_api_key} "
-        f"limit={binding.limit} count={binding.count}."
+        f"limit={round_count_for_display(binding.limit)} count={round_count_for_display(binding.count)}."
     )
