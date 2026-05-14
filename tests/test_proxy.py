@@ -1030,6 +1030,69 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await proxy_runner.cleanup()
 
+    async def test_proxy_internal_error_does_not_increment_count(self) -> None:
+        upstream_port = _find_free_port()
+        proxy_port = _find_free_port()
+
+        async def upstream_handler(request: web.Request) -> web.Response:
+            return web.json_response({"ok": True})
+
+        upstream_app = web.Application()
+        upstream_app.router.add_get("/{tail:.*}", upstream_handler)
+        upstream_runner = web.AppRunner(upstream_app)
+        await upstream_runner.setup()
+        upstream_site = web.TCPSite(upstream_runner, "127.0.0.1", upstream_port)
+        await upstream_site.start()
+
+        original_extract_usage = proxy_module._extract_usage_from_response
+
+        try:
+            with TemporaryDirectory() as temp_dir:
+                config_path = Path(temp_dir) / "proxy-config.json"
+                config = ProxyConfig(
+                    listen_host="127.0.0.1",
+                    listen_port=proxy_port,
+                    base_url=f"http://127.0.0.1:{upstream_port}/v1",
+                    upstream_api_key="shared-upstream-key",
+                    clients=[
+                        ClientConfig(
+                            name="client-1",
+                            client_api_key="client-key-a",
+                            limit=300,
+                            count=0,
+                        )
+                    ],
+                )
+                save_config(config_path, config)
+                store = ConfigStore.from_path(config_path)
+
+                proxy_runner = web.AppRunner(create_app(store))
+                await proxy_runner.setup()
+                proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
+                await proxy_site.start()
+
+                try:
+                    proxy_module._extract_usage_from_response = lambda *args, **kwargs: (_ for _ in ()).throw(
+                        RuntimeError("proxy-internal-error")
+                    )
+                    async with ClientSession() as session:
+                        async with session.get(
+                            f"http://127.0.0.1:{proxy_port}/chat",
+                            headers={"Authorization": "Bearer client-key-a"},
+                        ) as response:
+                            body = await response.text()
+
+                    self.assertEqual(response.status, 500)
+                    self.assertIn("500 Internal Server Error", body)
+                    reloaded = ConfigStore.from_path(config_path)
+                    self.assertEqual(reloaded.list_clients()[0].count, 0)
+                finally:
+                    proxy_module._extract_usage_from_response = original_extract_usage
+                    await proxy_runner.cleanup()
+        finally:
+            await upstream_site.stop()
+            await upstream_runner.cleanup()
+
     async def test_unlock_last_allows_over_limit_requests_and_continues_incrementing_count(self) -> None:
         upstream_port = _find_free_port()
         proxy_port = _find_free_port()

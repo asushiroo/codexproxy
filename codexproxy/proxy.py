@@ -269,6 +269,15 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
             reason="Today's limit exceeded",
         )
 
+    request_rolled_back = False
+
+    def rollback_reserved_request() -> None:
+        nonlocal request_rolled_back
+        if request_rolled_back:
+            return
+        store.rollback_request(client_api_key, request_cost=request_cost)
+        request_rolled_back = True
+
     target_url = build_target_url(binding.base_url, request.rel_url)
     forwarded_headers = _forward_request_headers(request.headers)
     _replace_upstream_auth_headers(forwarded_headers, binding.upstream_api_key)
@@ -301,7 +310,8 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
             logged_binding = binding
             log_detail = None
             if upstream_response.status >= 400:
-                logged_binding = store.rollback_request(client_api_key, request_cost=request_cost)
+                rollback_reserved_request()
+                logged_binding = store.get_client_by_name(binding.name)
                 log_detail = "upstream-status-error"
             print(
                 format_request_log_line(
@@ -392,8 +402,12 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
                     upstream_response=upstream_response_snapshot,
                 )
             return downstream
+    except asyncio.CancelledError:
+        rollback_reserved_request()
+        raise
     except ClientError as exc:
-        rolled_back_binding = store.rollback_request(client_api_key, request_cost=request_cost)
+        rollback_reserved_request()
+        rolled_back_binding = store.get_client_by_name(binding.name)
         print(
             format_request_log_line(
                 method=request.method,
@@ -427,6 +441,9 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
             },
             status=502,
         )
+    except Exception:
+        rollback_reserved_request()
+        raise
 
 
 async def run_proxy(config_path: Path, *, expire_time: str | None = None) -> None:
