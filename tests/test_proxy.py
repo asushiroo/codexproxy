@@ -1,5 +1,6 @@
 import json
 import io
+import re
 import socket
 from datetime import date
 from pathlib import Path
@@ -13,7 +14,7 @@ from aiohttp import ClientSession, web
 from yarl import URL
 
 from codexproxy.config import ClientConfig, ProxyConfig, save_config
-from codexproxy.expiry_manager import ExpiryStatus
+from codexproxy.expiry_manager import ExpiryManager, ExpiryStatus
 from codexproxy.proxy import (
     build_client_base_url,
     build_target_url,
@@ -96,9 +97,13 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             client_base_url="http://proxy.example.com:7001",
         )
 
-        self.assertEqual(
+        self.assertRegex(
             line,
-            "REQUEST method=POST path=/v1/chat?stream=true port=7001 name=client-a status=200 count=3/10 client_base_url=http://proxy.example.com:7001",
+            (
+                r"^\[\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\] "
+                r"REQUEST method=POST path=/v1/chat\?stream=true port=7001 "
+                r"name=client-a status=200 count=3/10 client_base_url=http://proxy\.example\.com:7001$"
+            ),
         )
 
     async def test_format_request_log_line_rounds_decimal_count_for_display(self) -> None:
@@ -113,9 +118,13 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             client_base_url="http://proxy.example.com:7001",
         )
 
-        self.assertEqual(
+        self.assertRegex(
             line,
-            "REQUEST method=POST path=/v1/chat port=7001 name=client-a status=200 count=2/300 client_base_url=http://proxy.example.com:7001",
+            (
+                r"^\[\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\] "
+                r"REQUEST method=POST path=/v1/chat port=7001 "
+                r"name=client-a status=200 count=2/300 client_base_url=http://proxy\.example\.com:7001$"
+            ),
         )
 
     async def test_format_record_log_line_contains_parsed_body(self) -> None:
@@ -128,9 +137,13 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             body='{"message":"hello"}',
         )
 
-        self.assertEqual(
+        self.assertRegex(
             line,
-            "RECORD direction=request method=POST path=/v1/chat port=7001 content_type=application/json body={\"message\":\"hello\"}",
+            (
+                r"^\[\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\] "
+                r"RECORD direction=request method=POST path=/v1/chat port=7001 "
+                r"content_type=application/json body=\{\"message\":\"hello\"\}$"
+            ),
         )
 
     async def test_same_port_tracks_different_clients_against_shared_upstream(self) -> None:
@@ -930,6 +943,145 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             await upstream_site.stop()
             await upstream_runner.cleanup()
 
+    async def test_upstream_403_json_error_without_charset_is_normalized_to_utf_8(self) -> None:
+        upstream_port = _find_free_port()
+        proxy_port = _find_free_port()
+        upstream_payload = {
+            "error": "request_error",
+            "message": "您的账号当前的使用次数已达上限",
+        }
+
+        async def upstream_handler(request: web.Request) -> web.Response:
+            body = json.dumps(upstream_payload, ensure_ascii=False).encode("utf-8")
+            return web.Response(
+                status=403,
+                body=body,
+                headers={"Content-Type": "application/json"},
+            )
+
+        upstream_app = web.Application()
+        upstream_app.router.add_get("/{tail:.*}", upstream_handler)
+        upstream_runner = web.AppRunner(upstream_app)
+        await upstream_runner.setup()
+        upstream_site = web.TCPSite(upstream_runner, "127.0.0.1", upstream_port)
+        await upstream_site.start()
+
+        try:
+            with TemporaryDirectory() as temp_dir:
+                config_path = Path(temp_dir) / "proxy-config.json"
+                config = ProxyConfig(
+                    listen_host="127.0.0.1",
+                    listen_port=proxy_port,
+                    base_url=f"http://127.0.0.1:{upstream_port}/v1",
+                    upstream_api_key="shared-upstream-key",
+                    clients=[
+                        ClientConfig(
+                            name="client-1",
+                            client_api_key="client-key-a",
+                            limit=300,
+                            count=0,
+                        )
+                    ],
+                )
+                save_config(config_path, config)
+                store = ConfigStore.from_path(config_path)
+
+                proxy_runner = web.AppRunner(create_app(store))
+                await proxy_runner.setup()
+                proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
+                await proxy_site.start()
+
+                try:
+                    async with ClientSession() as session:
+                        async with session.get(
+                            f"http://127.0.0.1:{proxy_port}/chat",
+                            headers={"Authorization": "Bearer client-key-a"},
+                        ) as response:
+                            payload = await response.json()
+
+                    self.assertEqual(response.status, 403)
+                    self.assertEqual(response.charset, "utf-8")
+                    self.assertEqual(payload, upstream_payload)
+                finally:
+                    await proxy_runner.cleanup()
+        finally:
+            await upstream_site.stop()
+            await upstream_runner.cleanup()
+
+    async def test_upstream_403_error_message_updates_expire_time_with_plus_ten_seconds(self) -> None:
+        upstream_port = _find_free_port()
+        proxy_port = _find_free_port()
+        upstream_expire_time = "2026-05-15 16:55:55"
+
+        async def upstream_handler(request: web.Request) -> web.Response:
+            payload = {
+                "error": "request_error",
+                "message": (
+                    "您的账号当前的使用次数已达上限，"
+                    f"请{upstream_expire_time}后重试。"
+                ),
+            }
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            return web.Response(
+                status=403,
+                body=body,
+                headers={"Content-Type": "application/json"},
+            )
+
+        upstream_app = web.Application()
+        upstream_app.router.add_get("/{tail:.*}", upstream_handler)
+        upstream_runner = web.AppRunner(upstream_app)
+        await upstream_runner.setup()
+        upstream_site = web.TCPSite(upstream_runner, "127.0.0.1", upstream_port)
+        await upstream_site.start()
+
+        try:
+            with TemporaryDirectory() as temp_dir:
+                config_path = Path(temp_dir) / "proxy-config.json"
+                config = ProxyConfig(
+                    listen_host="127.0.0.1",
+                    listen_port=proxy_port,
+                    base_url=f"http://127.0.0.1:{upstream_port}/v1",
+                    upstream_api_key="shared-upstream-key",
+                    clients=[
+                        ClientConfig(
+                            name="client-1",
+                            client_api_key="client-key-a",
+                            limit=300,
+                            count=0,
+                        )
+                    ],
+                )
+                save_config(config_path, config)
+                store = ConfigStore.from_path(config_path)
+                expiry_manager = ExpiryManager.from_runtime(
+                    config_path=config_path,
+                    expire_time_text="2026/5/3 21:32:39",
+                )
+
+                proxy_runner = web.AppRunner(create_app(store, expiry_manager=expiry_manager))
+                await proxy_runner.setup()
+                proxy_site = web.TCPSite(proxy_runner, "127.0.0.1", proxy_port)
+                await proxy_site.start()
+
+                try:
+                    async with ClientSession() as session:
+                        async with session.get(
+                            f"http://127.0.0.1:{proxy_port}/chat",
+                            headers={"Authorization": "Bearer client-key-a"},
+                        ) as response:
+                            _ = await response.json()
+
+                    self.assertEqual(response.status, 403)
+                    self.assertEqual(expiry_manager.expire_time_text, "2026/5/15 16:56:05")
+                    cache_text = (Path(temp_dir) / "cache" / "expire-time.json").read_text(encoding="utf-8")
+                    self.assertIn("2026/5/15 16:56:05", cache_text)
+                finally:
+                    await proxy_runner.cleanup()
+        finally:
+            await upstream_site.stop()
+            await upstream_runner.cleanup()
+
     async def test_failed_gpt_5_5_request_rolls_back_three_counts(self) -> None:
         upstream_port = _find_free_port()
         proxy_port = _find_free_port()
@@ -1044,7 +1196,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         upstream_site = web.TCPSite(upstream_runner, "127.0.0.1", upstream_port)
         await upstream_site.start()
 
-        original_extract_usage = proxy_module._extract_usage_from_response
+        original_forward_response_headers = proxy_module._forward_response_headers
 
         try:
             with TemporaryDirectory() as temp_dir:
@@ -1072,7 +1224,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                 await proxy_site.start()
 
                 try:
-                    proxy_module._extract_usage_from_response = lambda *args, **kwargs: (_ for _ in ()).throw(
+                    proxy_module._forward_response_headers = lambda *args, **kwargs: (_ for _ in ()).throw(
                         RuntimeError("proxy-internal-error")
                     )
                     async with ClientSession() as session:
@@ -1087,7 +1239,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                     reloaded = ConfigStore.from_path(config_path)
                     self.assertEqual(reloaded.list_clients()[0].count, 0)
                 finally:
-                    proxy_module._extract_usage_from_response = original_extract_usage
+                    proxy_module._forward_response_headers = original_forward_response_headers
                     await proxy_runner.cleanup()
         finally:
             await upstream_site.stop()
@@ -1218,7 +1370,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(record["upstream_response"]["body"], {"echo": "hello"})
 
                     messages = [" ".join(str(part) for part in call.args) for call in mocked_print.call_args_list]
-                    self.assertTrue(any(message.startswith("RECORD {") for message in messages))
+                    self.assertTrue(any(" RECORD {" in message for message in messages))
                     self.assertTrue(any(str(files[0]) in message for message in messages))
                     self.assertTrue(any("downstream_request" in message for message in messages))
                     self.assertTrue(any("upstream_request" in message for message in messages))

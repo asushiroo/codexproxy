@@ -197,6 +197,10 @@ class ExpiryManager:
         payload = {"expire_time": format_expire_time(self._expire_time)}
         self._cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
+    def override_expire_time(self, expire_time: datetime) -> None:
+        self._expire_time = expire_time
+        self._save_cache()
+
     def _delete_cache(self) -> None:
         if self._cache_path.exists():
             self._cache_path.unlink()

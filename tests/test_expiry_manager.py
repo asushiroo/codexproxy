@@ -169,3 +169,17 @@ class ExpiryManagerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(called_args[0][0], "/opt/bin/codex")
             cached_text = (Path(temp_dir) / "cache" / "expire-time.json").read_text(encoding="utf-8")
             self.assertIn("2026/5/4 22:00:00", cached_text)
+
+    def test_override_expire_time_updates_runtime_and_cache(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "proxy-config.json"
+            manager = ExpiryManager.from_runtime(
+                config_path=config_path,
+                expire_time_text="2026/5/3 21:32:39",
+            )
+
+            manager.override_expire_time(datetime(2026, 5, 15, 16, 56, 5))
+
+            self.assertEqual(manager.expire_time_text, "2026/5/15 16:56:05")
+            cache_text = (Path(temp_dir) / "cache" / "expire-time.json").read_text(encoding="utf-8")
+            self.assertIn("2026/5/15 16:56:05", cache_text)

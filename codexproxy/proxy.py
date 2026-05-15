@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 import socket
 from collections.abc import Mapping
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from aiohttp import ClientError, ClientSession, ClientTimeout, web
@@ -41,6 +43,10 @@ CONFIG_STORE_KEY = web.AppKey("config_store", ConfigStore)
 CLIENT_SESSION_KEY = web.AppKey("client_session", ClientSession)
 EXPIRY_MANAGER_KEY = web.AppKey("expiry_manager", ExpiryManager)
 SPEND_TRACKER_KEY = web.AppKey("spend_tracker", SpendTracker)
+
+
+def _current_log_timestamp() -> str:
+    return datetime.now().strftime("[%Y/%m/%d %H:%M:%S]")
 
 
 def build_target_url(base_url: str, request_url: URL) -> URL:
@@ -111,7 +117,7 @@ def format_request_log_line(
     parts.append(f"client_base_url={client_base_url}")
     if detail:
         parts.append(f"detail={detail}")
-    return " ".join(parts)
+    return f"{_current_log_timestamp()} {' '.join(parts)}"
 
 
 def format_record_log_line(
@@ -136,7 +142,7 @@ def format_record_log_line(
     if content_type:
         parts.append(f"content_type={content_type}")
     parts.append(f"body={body}")
-    return " ".join(parts)
+    return f"{_current_log_timestamp()} {' '.join(parts)}"
 
 
 def create_app(
@@ -332,6 +338,12 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
                 and _should_normalize_text_error_response(upstream_response.headers)
             ):
                 recorded_response_body = await upstream_response.read()
+                _update_expire_time_from_upstream_error(
+                    request,
+                    upstream_response.status,
+                    body=recorded_response_body,
+                    headers=upstream_response.headers,
+                )
 
                 if downstream_request_snapshot and upstream_request_snapshot:
                     upstream_response_snapshot = build_http_message_snapshot(
@@ -505,7 +517,29 @@ def _record_debug_artifacts(
         upstream_error=upstream_error,
     )
     file_path = save_debug_record(record)
-    print(format_debug_record_summary(record, file_path=file_path))
+    print(f"{_current_log_timestamp()} {format_debug_record_summary(record, file_path=file_path)}")
+
+
+def _update_expire_time_from_upstream_error(
+    request: web.Request,
+    status: int,
+    *,
+    body: bytes,
+    headers: Mapping[str, str],
+) -> None:
+    if status != 403 or EXPIRY_MANAGER_KEY not in request.app:
+        return
+    expiry_manager = request.app[EXPIRY_MANAGER_KEY]
+    if not hasattr(expiry_manager, "override_expire_time"):
+        return
+
+    extracted_expire_time = _extract_upstream_expire_time_from_error(body, headers)
+    if extracted_expire_time is None:
+        return
+
+    corrected = extracted_expire_time + timedelta(seconds=10)
+    expiry_manager.override_expire_time(corrected)
+    print(f"{_current_log_timestamp()} Expire time corrected from upstream: {corrected.strftime('%Y/%m/%d %H:%M:%S')}")
 
 
 def _is_unlock_last_active(request: web.Request) -> bool:
@@ -713,9 +747,7 @@ def _normalize_text_error_response_for_downstream(
 
     text, decoded_charset = decoded
     declared_charset = _extract_declared_charset(headers)
-    if decoded_charset.lower() == "utf-8" and (
-        declared_charset is None or declared_charset.lower() == "utf-8"
-    ):
+    if decoded_charset.lower() == "utf-8" and declared_charset is not None and declared_charset.lower() == "utf-8":
         return body, dict(headers.items())
 
     normalized_headers = dict(headers.items())
@@ -745,6 +777,22 @@ def _decode_text_error_body(body: bytes, headers: Mapping[str, str]) -> tuple[st
             continue
 
     return None
+
+
+def _extract_upstream_expire_time_from_error(body: bytes, headers: Mapping[str, str]) -> datetime | None:
+    decoded = _decode_text_error_body(body, headers)
+    if decoded is None:
+        return None
+
+    text, _ = decoded
+    match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", text)
+    if match is None:
+        return None
+
+    try:
+        return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
 
 
 def _extract_charset(headers: Mapping[str, str]) -> str:
