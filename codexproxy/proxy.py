@@ -361,16 +361,11 @@ async def handle_proxy_request(request: web.Request) -> web.StreamResponse:
                         upstream_request=upstream_request_snapshot,
                         upstream_response=upstream_response_snapshot,
                     )
-
-                downstream_body, downstream_headers = _normalize_text_error_response_for_downstream(
-                    body=recorded_response_body,
-                    headers=response_headers,
-                )
                 return web.Response(
                     status=upstream_response.status,
                     reason=upstream_response.reason,
-                    headers=downstream_headers,
-                    body=downstream_body,
+                    headers=response_headers,
+                    body=recorded_response_body,
                 )
 
             downstream = web.StreamResponse(

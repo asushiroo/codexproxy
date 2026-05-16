@@ -880,15 +880,16 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             await upstream_site.stop()
             await upstream_runner.cleanup()
 
-    async def test_upstream_text_error_without_charset_is_normalized_to_utf_8(self) -> None:
+    async def test_upstream_text_error_without_charset_is_forwarded_as_raw_bytes(self) -> None:
         upstream_port = _find_free_port()
         proxy_port = _find_free_port()
         upstream_message = "上游返回中文错误"
+        upstream_body = upstream_message.encode("gb18030")
 
         async def upstream_handler(request: web.Request) -> web.Response:
             return web.Response(
                 status=403,
-                body=upstream_message.encode("gb18030"),
+                body=upstream_body,
                 headers={"Content-Type": "text/plain"},
             )
 
@@ -930,11 +931,11 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                             f"http://127.0.0.1:{proxy_port}/chat",
                             headers={"Authorization": "Bearer client-key-a"},
                         ) as response:
-                            body = await response.text()
+                            body = await response.read()
 
                     self.assertEqual(response.status, 403)
-                    self.assertEqual(response.charset, "utf-8")
-                    self.assertEqual(body, upstream_message)
+                    self.assertEqual(response.headers.get("Content-Type"), "text/plain")
+                    self.assertEqual(body, upstream_body)
                     reloaded = ConfigStore.from_path(config_path)
                     self.assertEqual(reloaded.list_clients()[0].count, 0)
                 finally:
@@ -943,7 +944,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             await upstream_site.stop()
             await upstream_runner.cleanup()
 
-    async def test_upstream_403_json_error_without_charset_is_normalized_to_utf_8(self) -> None:
+    async def test_upstream_403_json_error_without_charset_is_forwarded_without_charset_rewrite(self) -> None:
         upstream_port = _find_free_port()
         proxy_port = _find_free_port()
         upstream_payload = {
@@ -1000,7 +1001,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                             payload = await response.json()
 
                     self.assertEqual(response.status, 403)
-                    self.assertEqual(response.charset, "utf-8")
+                    self.assertEqual(response.headers.get("Content-Type"), "application/json")
                     self.assertEqual(payload, upstream_payload)
                 finally:
                     await proxy_runner.cleanup()
